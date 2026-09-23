@@ -374,7 +374,8 @@ bool TradeManager::restartMarketStream()
 }
 
 
-bool TradeManager::requestPortfolioHistory(std::vector<portfolio_holding> holdings)
+bool TradeManager::requestPortfolioHistory(std::vector<portfolio_holding> holdings,
+    const std::string& requested_range)
 {
     if (!_credentials_available || holdings.empty()) {
         return false;
@@ -397,127 +398,163 @@ bool TradeManager::requestPortfolioHistory(std::vector<portfolio_holding> holdin
     const std::string app_key = _settings.kis_app_key;
     const std::string app_secret = _settings.kis_app_secret;
     const HWND parent = _parent;
+    const std::string range = requested_range == "1w" || requested_range == "1m"
+        || requested_range == "1y" ? requested_range : "4h";
 
-    _history_worker = std::thread([this, parent, app_key, app_secret, holdings = std::move(holdings)]() {
+    _history_worker = std::thread([this, parent, app_key, app_secret, range,
+        holdings = std::move(holdings)]() {
         try {
-        struct aggregate_bar {
-            double open = 0;
-            double high = 0;
-            double low = 0;
-            double close = 0;
-            size_t count = 0;
-        };
+            struct aggregate_bar {
+                double open = 0;
+                double high = 0;
+                double low = 0;
+                double close = 0;
+                size_t count = 0;
+            };
 
-        boost::json::object result;
-        boost::json::array errors;
-        std::map<std::string, aggregate_bar> aggregate;
-        size_t reflected = 0;
+            const bool intraday = range == "4h";
+            const int history_days = range == "1w" ? 7 : range == "1m" ? 31 : 366;
+            const size_t daily_records = range == "1w" ? 10 : range == "1m" ? 40 : 380;
+            const std::string end_date = today_key();
+            const std::string start_date = intraday ? std::string{} : offset_date_key_tm(end_date, -history_days);
 
-        KISClient history_client;
-        kis_domain::information_token token = accessTokenSnapshot();
-        std::string token_refresh_error;
-        const auto request_minute_bars = [&](const std::string& request_exchange,
-            const std::string& ticker, std::vector<kis_domain::minute_bar>& bars) {
-            if (!token_refresh_error.empty()) return false;
-            if (history_client.request_overseas_minute_bars(
-                app_key, app_secret, token, request_exchange, ticker, bars, 480)) {
-                return true;
-            }
-            if (!history_client.isLastErrorTokenExpired()) return false;
-            if (!refreshAccessTokenAfterExpiration(token, &token_refresh_error)) {
-                return false;
-            }
-            token_refresh_error.clear();
-            token = accessTokenSnapshot();
-            bars.clear();
-            return history_client.request_overseas_minute_bars(
-                app_key, app_secret, token, request_exchange, ticker, bars, 480);
-        };
+            boost::json::object result;
+            boost::json::array errors;
+            std::map<std::string, aggregate_bar> aggregate;
+            size_t reflected = 0;
 
-        for (const auto& holding : holdings) {
-            std::vector<kis_domain::minute_bar> bars;
-            std::string resolved_exchange = holding.exchange;
-            bool loaded = request_minute_bars(resolved_exchange, holding.ticker, bars);
+            KISClient history_client;
+            kis_domain::information_token token = accessTokenSnapshot();
+            std::string token_refresh_error;
+            const auto request_minute_bars = [&](const std::string& exchange,
+                const std::string& ticker, std::vector<kis_domain::minute_bar>& bars) {
+                if (!token_refresh_error.empty()) return false;
+                if (history_client.request_overseas_minute_bars(
+                    app_key, app_secret, token, exchange, ticker, bars, 480)) return true;
+                if (!history_client.isLastErrorTokenExpired()) return false;
+                if (!refreshAccessTokenAfterExpiration(token, &token_refresh_error)) return false;
+                token_refresh_error.clear();
+                token = accessTokenSnapshot();
+                bars.clear();
+                return history_client.request_overseas_minute_bars(
+                    app_key, app_secret, token, exchange, ticker, bars, 480);
+            };
+            const auto request_daily_bars = [&](const std::string& exchange,
+                const std::string& ticker, std::vector<kis_domain::daily_bar>& bars) {
+                if (!token_refresh_error.empty()) return false;
+                if (history_client.request_overseas_daily_bars(app_key, app_secret, token,
+                    exchange, ticker, start_date, end_date, bars, daily_records)) return true;
+                if (!history_client.isLastErrorTokenExpired()) return false;
+                if (!refreshAccessTokenAfterExpiration(token, &token_refresh_error)) return false;
+                token_refresh_error.clear();
+                token = accessTokenSnapshot();
+                bars.clear();
+                return history_client.request_overseas_daily_bars(app_key, app_secret, token,
+                    exchange, ticker, start_date, end_date, bars, daily_records);
+            };
 
-            // 수동 등록 종목에서 거래소를 US/USA로 입력한 경우 실제 미국 거래소를 순서대로 시도합니다.
-            std::string exchange_upper = holding.exchange;
-            std::transform(exchange_upper.begin(), exchange_upper.end(), exchange_upper.begin(),
-                [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
-            if (!loaded && token_refresh_error.empty()
-                && (exchange_upper.empty() || exchange_upper == "US" || exchange_upper == "USA")) {
-                for (const char* fallback_exchange : { "NASD", "NYSE", "AMEX" }) {
-                    bars.clear();
-                    if (request_minute_bars(fallback_exchange, holding.ticker, bars)) {
-                        loaded = true;
-                        resolved_exchange = fallback_exchange;
-                        break;
+            for (const auto& holding : holdings) {
+                std::vector<std::string> exchanges{ holding.exchange };
+                std::string exchange_upper = holding.exchange;
+                std::transform(exchange_upper.begin(), exchange_upper.end(), exchange_upper.begin(),
+                    [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+                if (exchange_upper.empty() || exchange_upper == "US" || exchange_upper == "USA") {
+                    exchanges = { "NASD", "NYSE", "AMEX" };
+                }
+
+                bool loaded = false;
+                if (intraday) {
+                    std::vector<kis_domain::minute_bar> bars;
+                    for (const auto& exchange : exchanges) {
+                        bars.clear();
+                        if (request_minute_bars(exchange, holding.ticker, bars)) {
+                            loaded = true;
+                            break;
+                        }
                     }
+                    if (loaded) {
+                        for (const auto& bar : bars) {
+                            if (bar.kr_timestamp.empty()) continue;
+                            auto& total = aggregate[bar.kr_timestamp];
+                            total.open += bar.open * holding.quantity;
+                            total.high += bar.high * holding.quantity;
+                            total.low += bar.low * holding.quantity;
+                            total.close += bar.close * holding.quantity;
+                            ++total.count;
+                        }
+                    }
+                }
+                else {
+                    std::vector<kis_domain::daily_bar> bars;
+                    for (const auto& exchange : exchanges) {
+                        bars.clear();
+                        if (request_daily_bars(exchange, holding.ticker, bars)) {
+                            loaded = true;
+                            break;
+                        }
+                    }
+                    if (loaded) {
+                        for (const auto& bar : bars) {
+                            if (bar.date.empty()) continue;
+                            auto& total = aggregate[bar.date + "000000"];
+                            total.open += bar.open * holding.quantity;
+                            total.high += bar.high * holding.quantity;
+                            total.low += bar.low * holding.quantity;
+                            total.close += bar.close * holding.quantity;
+                            ++total.count;
+                        }
+                    }
+                }
+
+                if (!loaded) {
+                    boost::json::object error;
+                    error["ticker"] = holding.ticker;
+                    error["exchange"] = holding.exchange;
+                    error["message"] = token_refresh_error.empty()
+                        ? history_client.getLastError() : token_refresh_error;
+                    errors.push_back(std::move(error));
+                    continue;
+                }
+                ++reflected;
+                std::this_thread::sleep_for(std::chrono::milliseconds(120));
+            }
+
+            boost::json::array candles;
+            const bool all_holdings_loaded = reflected == holdings.size();
+            if (all_holdings_loaded) {
+                for (const auto& [timestamp, bar] : aggregate) {
+                    if (bar.count != holdings.size()) continue;
+                    boost::json::object candle;
+                    candle["timestamp"] = timestamp;
+                    candle["open"] = bar.open;
+                    candle["high"] = (std::max)(bar.high, (std::max)(bar.open, bar.close));
+                    candle["low"] = (std::min)(bar.low, (std::min)(bar.open, bar.close));
+                    candle["close"] = bar.close;
+                    candles.push_back(std::move(candle));
                 }
             }
 
-            if (!loaded) {
-                boost::json::object error;
-                error["ticker"] = holding.ticker;
-                error["exchange"] = holding.exchange;
-                error["message"] = token_refresh_error.empty()
-                    ? history_client.getLastError()
-                    : token_refresh_error;
-                errors.push_back(std::move(error));
-                continue;
+            const std::string unit = intraday ? "1분봉" : "일봉";
+            const bool has_candles = !candles.empty();
+            result["success"] = all_holdings_loaded && has_candles;
+            result["candles"] = std::move(candles);
+            result["range"] = range;
+            result["interval"] = intraday ? "minute" : "day";
+            result["reflected_count"] = static_cast<int64_t>(reflected);
+            result["requested_count"] = static_cast<int64_t>(holdings.size());
+            result["errors"] = std::move(errors);
+            if (reflected == 0) result["message"] = "과거 " + unit + "을 불러오지 못했습니다.";
+            else if (reflected < holdings.size()) {
+                result["message"] = std::format(
+                    "과거 {} 일부 종목 조회 실패 ({}/{}). 불완전한 포트폴리오 차트는 표시하지 않습니다.",
+                    unit, reflected, holdings.size());
             }
+            else if (!has_candles) result["message"] = "공통 거래일의 과거 " + unit + "을 찾지 못했습니다.";
+            else result["message"] = std::format("과거 {} {}종목 반영", unit, reflected);
 
-            ++reflected;
-            for (const auto& bar : bars) {
-                if (bar.kr_timestamp.empty()) continue;
-                auto& total = aggregate[bar.kr_timestamp];
-                total.open += bar.open * holding.quantity;
-                total.high += bar.high * holding.quantity;
-                total.low += bar.low * holding.quantity;
-                total.close += bar.close * holding.quantity;
-                ++total.count;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(120));
-        }
-
-        boost::json::array candles;
-        const bool all_holdings_loaded = reflected == holdings.size();
-        if (all_holdings_loaded) {
-            for (const auto& [timestamp, bar] : aggregate) {
-                // 현재 포트폴리오의 모든 종목이 같은 시각에 존재하는 경우만 사용합니다.
-                // 일부 종목만 합산한 분봉을 그리면 실시간 평가액과 큰 갭이 생길 수 있습니다.
-                if (bar.count != holdings.size()) continue;
-                boost::json::object candle;
-                candle["timestamp"] = timestamp;
-                candle["open"] = bar.open;
-                candle["high"] = (std::max)(bar.high, (std::max)(bar.open, bar.close));
-                candle["low"] = (std::min)(bar.low, (std::min)(bar.open, bar.close));
-                candle["close"] = bar.close;
-                candles.push_back(std::move(candle));
-            }
-        }
-
-        result["success"] = all_holdings_loaded && !candles.empty();
-        result["candles"] = std::move(candles);
-        result["reflected_count"] = static_cast<int64_t>(reflected);
-        result["requested_count"] = static_cast<int64_t>(holdings.size());
-        result["errors"] = std::move(errors);
-        if (reflected == 0) {
-            result["message"] = "과거 분봉을 불러오지 못했습니다.";
-        } else if (reflected < holdings.size()) {
-            result["message"] = std::format(
-                "과거 분봉 일부 종목 조회 실패 ({}/{}). 불완전한 포트폴리오 차트는 표시하지 않습니다.",
-                reflected, holdings.size());
-        } else if (candles.empty()) {
-            result["message"] = "모든 보유종목이 동시에 존재하는 과거 1분봉을 찾지 못했습니다.";
-        } else {
-            result["message"] = std::format("과거 분봉 {}종목 반영", reflected);
-        }
-
-        auto payload = std::make_unique<std::string>(boost::json::serialize(result));
-        if (IsWindow(parent) && PostMessage(parent, WM_RECEIVE_PORTFOLIO_HISTORY, 0,
-            reinterpret_cast<LPARAM>(payload.get()))) {
-            payload.release();
-        }
+            auto payload = std::make_unique<std::string>(boost::json::serialize(result));
+            if (IsWindow(parent) && PostMessage(parent, WM_RECEIVE_PORTFOLIO_HISTORY, 0,
+                reinterpret_cast<LPARAM>(payload.get()))) payload.release();
         }
         catch (const std::exception& error) {
             boost::json::object result;

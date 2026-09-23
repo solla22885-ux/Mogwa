@@ -66,7 +66,8 @@ public:
     void setWatchSubscriptions(const std::vector<std::pair<std::string, std::string>>& subscriptions,
         bool restart_stream = true);
     bool restartMarketStream();
-    bool requestPortfolioHistory(std::vector<portfolio_holding> holdings);
+    bool requestPortfolioHistory(std::vector<portfolio_holding> holdings,
+        const std::string& range = "4h");
     bool requestPortfolioPerformance(std::vector<portfolio_holding> holdings,
         const std::string& start_date, const std::string& end_date);
     bool requestRealtimeQuote(const std::string& ticker, const std::string& exchange);

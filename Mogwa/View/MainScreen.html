@@ -333,6 +333,25 @@
         gap: 10px;
         flex-wrap: wrap;
       }
+      .trend-range-button {
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 5px 8px;
+        background: var(--panel-soft);
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .trend-range-button.active {
+        border-color: var(--accent);
+        background: rgba(124, 140, 255, 0.14);
+        color: #fff;
+      }
+      .trend-range-button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
       .trend-history-status {
         color: var(--muted);
         font-size: 10px;
@@ -1520,12 +1539,41 @@
             <article class="card chart-card">
               <div class="card-head">
                 <div>
-                  <div class="card-title">자산 흐름 · 1분봉</div>
+                  <div class="card-title" id="trendChartTitle">
+                    자산 흐름 · 1분봉
+                  </div>
                   <div class="card-description">
                     드래그 이동 · Shift+드래그 구간 수익률 · 휠 확대·축소
                   </div>
                 </div>
                 <div class="trend-head-actions">
+                  <div class="quick-ranges" aria-label="자산 흐름 조회 기간">
+                    <button
+                      class="trend-range-button active"
+                      data-trend-range="4h"
+                      type="button"
+                    >
+                      4시간</button
+                    ><button
+                      class="trend-range-button"
+                      data-trend-range="1w"
+                      type="button"
+                    >
+                      1주</button
+                    ><button
+                      class="trend-range-button"
+                      data-trend-range="1m"
+                      type="button"
+                    >
+                      1개월</button
+                    ><button
+                      class="trend-range-button"
+                      data-trend-range="1y"
+                      type="button"
+                    >
+                      1년
+                    </button>
+                  </div>
                   <span class="trend-history-status" id="trendHistoryStatus"
                     >과거 분봉 대기</span
                   >
@@ -2358,10 +2406,12 @@
         manualStocks: [],
         byTicker: new Map(),
         trend: [],
-        trendVisibleCount: 60,
+        // Show four hours by default while retaining the full cached history for zooming.
+        trendVisibleCount: 240,
         trendViewStart: 0,
         trendFollowLive: true,
         trendSelection: null,
+        trendRange: "4h",
         historyLoading: false,
         historySignature: "",
         credentialsMissing: true,
@@ -2554,19 +2604,23 @@
           return;
         const holdings = portfolioHistoryHoldings();
         if (!holdings.length) return;
-        const signature = JSON.stringify(
+        const signature = JSON.stringify([
+          state.trendRange,
           holdings.map((item) => [item.exchange, item.ticker, item.quantity]),
-        );
+        ]);
         if (!force && signature === state.historySignature) return;
         state.historySignature = signature;
         state.historyLoading = true;
         const status = $("#trendHistoryStatus");
         if (status) {
-          status.textContent = `과거 분봉 불러오는 중 · ${holdings.length}종목`;
+          status.textContent = `과거 데이터 불러오는 중 · ${holdings.length}종목`;
           status.classList.add("is-loading");
         }
+        document.querySelectorAll(".trend-range-button").forEach((button) => {
+          button.disabled = true;
+        });
         window.chrome.webview.postMessage(
-          `apps://internal/load_portfolio_history\n${JSON.stringify(holdings)}`,
+          `apps://internal/load_portfolio_history\n${JSON.stringify({ range: state.trendRange, holdings })}`,
         );
       }
 
@@ -3159,7 +3213,10 @@
         if (!Number.isFinite(summary.evaluation) || summary.evaluation <= 0)
           return;
         const now = new Date();
-        const minuteKey = minuteKeyFromDate(now);
+        const minuteKey =
+          state.trendRange === "4h"
+            ? minuteKeyFromDate(now)
+            : `${apiDate(isoDate(now))}0000`;
         const timestamp = `${minuteKey}00`;
         const time = formatTrendTime(timestamp);
         const last = state.trend.at(-1);
@@ -3584,6 +3641,9 @@
 
       function load_portfolio_history(payload) {
         state.historyLoading = false;
+        document.querySelectorAll(".trend-range-button").forEach((button) => {
+          button.disabled = false;
+        });
         const status = $("#trendHistoryStatus");
         status?.classList.remove("is-loading");
         if (!payload?.success || !Array.isArray(payload.candles)) {
@@ -3643,7 +3703,7 @@
         const suffix =
           reflected < requested ? ` · ${reflected}/${requested}종목 반영` : "";
         if (status)
-          status.textContent = `과거 ${historical.length.toLocaleString()}개 1분봉${suffix}`;
+          status.textContent = `과거 ${historical.length.toLocaleString()}개 ${payload.interval === "day" ? "일봉" : "1분봉"}${suffix}`;
         drawTrend();
       }
 
@@ -5105,6 +5165,40 @@
         renderAll(false);
         invalidatePerformance();
       });
+
+      document.querySelectorAll(".trend-range-button").forEach((button) =>
+        button.addEventListener("click", () => {
+          if (
+            state.historyLoading ||
+            button.dataset.trendRange === state.trendRange
+          )
+            return;
+          const range = button.dataset.trendRange,
+            settings = {
+              "4h": { visible: 240, label: "1분봉" },
+              "1w": { visible: 10, label: "일봉" },
+              "1m": { visible: 35, label: "일봉" },
+              "1y": { visible: 260, label: "일봉" },
+            }[range];
+          if (!settings) return;
+
+          state.trendRange = range;
+          state.trendVisibleCount = settings.visible;
+          state.trend = [];
+          state.trendSelection = null;
+          state.trendFollowLive = true;
+          state.historySignature = "";
+          document
+            .querySelectorAll(".trend-range-button")
+            .forEach((item) =>
+              item.classList.toggle("active", item === button),
+            );
+          const title = $("#trendChartTitle");
+          if (title) title.textContent = `자산 흐름 · ${settings.label}`;
+          drawTrend();
+          requestPortfolioHistory(true);
+        }),
+      );
 
       document.querySelectorAll(".quick-range").forEach((button) =>
         button.addEventListener("click", () => {

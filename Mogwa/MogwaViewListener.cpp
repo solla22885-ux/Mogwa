@@ -275,8 +275,20 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
                 message.substr(webview_message::load_portfolio_history.size()));
             const boost::json::value parsed = boost::json::parse(payload);
             std::vector<TradeManager::portfolio_holding> holdings;
-            if (parsed.is_array()) {
-                for (const auto& value : parsed.as_array()) {
+            std::string range = "4h";
+            const boost::json::array* items = nullptr;
+            if (parsed.is_array()) items = &parsed.as_array();
+            else if (parsed.is_object()) {
+                const auto& input = parsed.as_object();
+                if (const auto* value = input.if_contains("range"); value && value->is_string()) {
+                    range = std::string(value->as_string());
+                }
+                if (const auto* value = input.if_contains("holdings"); value && value->is_array()) {
+                    items = &value->as_array();
+                }
+            }
+            if (items) {
+                for (const auto& value : *items) {
                     if (!value.is_object()) continue;
                     const auto& item = value.as_object();
                     const auto* ticker = item.if_contains("ticker");
@@ -307,7 +319,8 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
                 }
             }
 
-            const bool started = _manager && _manager->requestPortfolioHistory(std::move(holdings));
+            const bool started = _manager
+                && _manager->requestPortfolioHistory(std::move(holdings), range);
             if (!started) {
                 response["success"] = false;
                 response["message"] = _manager && !_manager->hasKisCredentials()
