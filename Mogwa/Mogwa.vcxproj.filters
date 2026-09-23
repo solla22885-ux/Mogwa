@@ -1,0 +1,149 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="리소스 파일">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="L2Webview">
+      <UniqueIdentifier>{75d64907-f0d7-4078-bf23-2f0402b82e45}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Core">
+      <UniqueIdentifier>{31ee818c-17ad-4e20-9774-88e7d4bc5353}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Investment">
+      <UniqueIdentifier>{49858189-bffd-4965-831d-1aa0cc5f3b58}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="DB">
+      <UniqueIdentifier>{e2529c6a-49c0-44d2-8809-44b64808d2a4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="lib">
+      <UniqueIdentifier>{2f5ec108-2dd8-44ce-8df8-1e009fe6dffc}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="targetver.h" />
+    <ClInclude Include="MainFrm.h" />
+    <ClInclude Include="framework.h" />
+    <ClInclude Include="Mogwa.h" />
+    <ClInclude Include="MogwaDoc.h" />
+    <ClInclude Include="MogwaView.h" />
+    <ClInclude Include="pch.h" />
+    <ClInclude Include="Resource.h" />
+    <ClInclude Include="L2Webview\L2Webview.h">
+      <Filter>L2Webview</Filter>
+    </ClInclude>
+    <ClInclude Include="L2Webview\L2WebviewController.h">
+      <Filter>L2Webview</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Singleton.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Investment\TradeManager.h">
+      <Filter>Investment</Filter>
+    </ClInclude>
+    <ClInclude Include="Investment\KISClient.h">
+      <Filter>Investment</Filter>
+    </ClInclude>
+    <ClInclude Include="Investment\KISStreamClient.h">
+      <Filter>Investment</Filter>
+    </ClInclude>
+    <ClInclude Include="Investment\AppConfig.h">
+      <Filter>Investment</Filter>
+    </ClInclude>
+    <ClInclude Include="Investment\KISDomain.h">
+      <Filter>Investment</Filter>
+    </ClInclude>
+    <ClInclude Include="Investment\KISJson.hpp">
+      <Filter>Investment</Filter>
+    </ClInclude>
+    <ClInclude Include="L2Webview\L2WebviewListener.h">
+      <Filter>L2Webview</Filter>
+    </ClInclude>
+    <ClInclude Include="DB\DBManager.h">
+      <Filter>DB</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\scope_exit.hpp">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\sql_lite.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\string.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\chat_gpt_fn.h">
+      <Filter>lib</Filter>
+    </ClInclude>
+    <ClInclude Include="CommonMessages.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Investment\AppConfig.cpp">
+      <Filter>Investment</Filter>
+    </ClCompile>
+    <ClCompile Include="MogwaView.cpp" />
+    <ClCompile Include="MogwaDoc.cpp" />
+    <ClCompile Include="pch.cpp" />
+    <ClCompile Include="MainFrm.cpp" />
+    <ClCompile Include="Mogwa.cpp" />
+    <ClCompile Include="L2Webview\L2Webview.cpp">
+      <Filter>L2Webview</Filter>
+    </ClCompile>
+    <ClCompile Include="L2Webview\L2WebviewController.cpp">
+      <Filter>L2Webview</Filter>
+    </ClCompile>
+    <ClCompile Include="Investment\TradeManager.cpp">
+      <Filter>Investment</Filter>
+    </ClCompile>
+    <ClCompile Include="Investment\KISClient.cpp">
+      <Filter>Investment</Filter>
+    </ClCompile>
+    <ClCompile Include="Investment\KISStreamClient.cpp">
+      <Filter>Investment</Filter>
+    </ClCompile>
+    <ClCompile Include="MogwaViewListener.cpp" />
+    <ClCompile Include="DB\DBManager.cpp">
+      <Filter>DB</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\sql_lite.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\string.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\chat_gpt_fn.cpp">
+      <Filter>lib</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Mogwa.rc">
+      <Filter>리소스 파일</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="res\userimages.bmp">
+      <Filter>리소스 파일</Filter>
+    </Image>
+    <Image Include="res\MogwaDoc.ico">
+      <Filter>리소스 파일</Filter>
+    </Image>
+    <Image Include="res\Mogwa.ico">
+      <Filter>리소스 파일</Filter>
+    </Image>
+    <Image Include="res\Toolbar.bmp">
+      <Filter>리소스 파일</Filter>
+    </Image>
+    <Image Include="res\Toolbar256.bmp">
+      <Filter>리소스 파일</Filter>
+    </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="res\Mogwa.rc2">
+      <Filter>리소스 파일</Filter>
+    </None>
+    <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="View\MainScreen.html" />
+  </ItemGroup>
+</Project>

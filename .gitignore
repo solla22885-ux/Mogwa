@@ -1,0 +1,26 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+
+# Build outputs and runtime data
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+artifacts/
+Mogwa/x64/
+Mogwa/Debug/
+Mogwa/Release/
+*.exe.WebView2/
+
+# Dependencies restored by NuGet/vcpkg
+packages/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+localdata.db*
