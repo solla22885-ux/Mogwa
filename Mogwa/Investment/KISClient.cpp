@@ -7,6 +7,7 @@
 #include <boost/json.hpp>
 #include <curl/curl.h>
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 #include <cctype>
 #include <chrono>
@@ -14,6 +15,55 @@
 #include <sstream>
 
 namespace {
+    using steady_clock = std::chrono::steady_clock;
+
+    constexpr auto quote_cache_ttl = std::chrono::seconds(5);
+    constexpr auto minute_cache_ttl = std::chrono::seconds(60);
+    constexpr auto current_daily_cache_ttl = std::chrono::minutes(5);
+    constexpr auto historical_daily_cache_ttl = std::chrono::hours(24);
+    constexpr auto minimum_request_interval = std::chrono::milliseconds(60);
+
+    struct quote_cache_entry {
+        kis_domain::overseas_quote value;
+        steady_clock::time_point stored_at;
+    };
+
+    struct minute_cache_entry {
+        std::vector<kis_domain::minute_bar> values;
+        size_t max_records = 0;
+        steady_clock::time_point stored_at;
+    };
+
+    struct daily_cache_entry {
+        std::vector<kis_domain::daily_bar> values;
+        std::string covered_start;
+        std::string covered_end;
+        steady_clock::time_point stored_at;
+    };
+
+    std::mutex market_cache_mutex;
+    std::unordered_map<std::string, quote_cache_entry> quote_cache;
+    std::unordered_map<std::string, minute_cache_entry> minute_cache;
+    std::unordered_map<std::string, daily_cache_entry> daily_cache;
+    std::unordered_map<std::string, std::string> resolved_us_exchanges;
+
+    std::string current_date_key()
+    {
+        const std::time_t now = std::time(nullptr);
+        std::tm local{};
+        localtime_s(&local, &now);
+        std::ostringstream result;
+        result << std::put_time(&local, "%Y%m%d");
+        return result.str();
+    }
+
+    std::string market_cache_key(const std::string& exchange, std::string ticker)
+    {
+        std::transform(ticker.begin(), ticker.end(), ticker.begin(),
+            [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        return exchange + ':' + ticker;
+    }
+
     void configure_request(CURL* curl)
     {
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 5000L);
@@ -24,7 +74,18 @@ namespace {
 
     bool perform_request(CURL* curl, long* response_status = nullptr)
     {
+        // KIS applies a shared per-app REST rate limit. All client instances use
+        // this gate so background portfolio workers cannot burst requests.
+        static std::mutex request_mutex;
+        static steady_clock::time_point last_request;
+        std::unique_lock request_lock(request_mutex);
+        const auto elapsed = steady_clock::now() - last_request;
+        if (last_request != steady_clock::time_point{} && elapsed < minimum_request_interval) {
+            std::this_thread::sleep_for(minimum_request_interval - elapsed);
+        }
+
         const CURLcode result = curl_easy_perform(curl);
+        last_request = steady_clock::now();
         if (result != CURLE_OK) {
             TRACE(L"[KISClient] curl error: %hs\n", curl_easy_strerror(result));
             if (response_status) *response_status = 0;
@@ -71,6 +132,24 @@ namespace {
         if (exchange == "SZAA" || exchange == "SZS") return "SZS";
         if (exchange == "TKSE" || exchange == "TSE") return "TSE";
         return exchange;
+    }
+
+    std::string resolve_quote_exchange(const std::string& exchange, const std::string& ticker)
+    {
+        const std::string normalized = normalize_quote_exchange(exchange);
+        if (!normalized.empty() && normalized != "US" && normalized != "USA") return normalized;
+
+        const std::string ticker_key = market_cache_key({}, ticker);
+        std::scoped_lock cache_lock(market_cache_mutex);
+        const auto cached = resolved_us_exchanges.find(ticker_key);
+        return cached == resolved_us_exchanges.end() ? normalized : cached->second;
+    }
+
+    void remember_us_exchange(const std::string& ticker, const std::string& exchange)
+    {
+        if (exchange != "NAS" && exchange != "NYS" && exchange != "AMS") return;
+        std::scoped_lock cache_lock(market_cache_mutex);
+        resolved_us_exchanges[market_cache_key({}, ticker)] = exchange;
     }
 
     std::string json_string(const boost::json::object& object, std::initializer_list<const char*> keys)
@@ -477,7 +556,17 @@ bool KISClient::request_overseas_quote(const std::string& appkey, const std::str
     _last_error.clear();
     if (ticker.empty()) return false;
 
-    const std::string excd = normalize_quote_exchange(exchange);
+    const std::string excd = resolve_quote_exchange(exchange, ticker);
+    const std::string cache_key = market_cache_key(excd, ticker);
+    {
+        std::scoped_lock cache_lock(market_cache_mutex);
+        const auto cached = quote_cache.find(cache_key);
+        if (cached != quote_cache.end()
+            && steady_clock::now() - cached->second.stored_at <= quote_cache_ttl) {
+            output = cached->second.value;
+            return true;
+        }
+    }
     const std::string query = "?AUTH=&EXCD=" + excd + "&SYMB=" + ticker;
     const std::string url = std::format("{}{}{}", BASE_URL, OVERSEAS_PRICE_PATH, query);
 
@@ -542,7 +631,13 @@ bool KISClient::request_overseas_quote(const std::string& appkey, const std::str
     output.amount = json_double(row, { "tamt" });
     output.change_sign = json_string(row, { "sign" });
     output.orderable = json_string(row, { "ordy" });
-    return output.price > 0;
+    if (output.price <= 0) return false;
+    remember_us_exchange(ticker, excd);
+    {
+        std::scoped_lock cache_lock(market_cache_mutex);
+        quote_cache[cache_key] = { output, steady_clock::now() };
+    }
+    return true;
 }
 
 bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std::string& appsecret,
@@ -554,7 +649,28 @@ bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std
     _last_error.clear();
     if (ticker.empty() || start_date.size() != 8 || end_date.size() != 8 || max_records == 0) return false;
 
-    const std::string excd = normalize_quote_exchange(exchange);
+    const std::string excd = resolve_quote_exchange(exchange, ticker);
+    const std::string cache_key = market_cache_key(excd, ticker);
+    {
+        std::scoped_lock cache_lock(market_cache_mutex);
+        const auto cached = daily_cache.find(cache_key);
+        if (cached != daily_cache.end()) {
+            const auto ttl = end_date < current_date_key()
+                ? historical_daily_cache_ttl
+                : current_daily_cache_ttl;
+            if (steady_clock::now() - cached->second.stored_at <= ttl
+                && cached->second.covered_start <= start_date
+                && cached->second.covered_end >= end_date) {
+                for (const auto& bar : cached->second.values) {
+                    if (bar.date >= start_date && bar.date <= end_date) output.push_back(bar);
+                }
+                if (output.size() > max_records) {
+                    output.erase(output.begin(), output.end() - static_cast<ptrdiff_t>(max_records));
+                }
+                return !output.empty();
+            }
+        }
+    }
     std::string current_bymd = end_date;
     std::unordered_set<std::string> seen;
 
@@ -651,7 +767,29 @@ bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std
     std::sort(output.begin(), output.end(), [](const auto& lhs, const auto& rhs) {
         return lhs.date < rhs.date;
     });
-    return !output.empty();
+    if (output.empty()) return false;
+    remember_us_exchange(ticker, excd);
+
+    {
+        std::scoped_lock cache_lock(market_cache_mutex);
+        auto& cached = daily_cache[cache_key];
+        std::map<std::string, kis_domain::daily_bar> merged;
+        for (const auto& bar : cached.values) merged[bar.date] = bar;
+        for (const auto& bar : output) merged[bar.date] = bar;
+        cached.values.clear();
+        cached.values.reserve(merged.size());
+        for (auto& [date, bar] : merged) cached.values.push_back(std::move(bar));
+
+        const std::string actual_start = output.size() < max_records ? start_date : output.front().date;
+        cached.covered_start = cached.covered_start.empty()
+            ? actual_start
+            : (std::min)(cached.covered_start, actual_start);
+        cached.covered_end = cached.covered_end.empty()
+            ? end_date
+            : (std::max)(cached.covered_end, end_date);
+        cached.stored_at = steady_clock::now();
+    }
+    return true;
 }
 
 bool KISClient::request_overseas_minute_bars(const std::string& appkey, const std::string& appsecret,
@@ -662,7 +800,22 @@ bool KISClient::request_overseas_minute_bars(const std::string& appkey, const st
     _last_error.clear();
     if (ticker.empty() || max_records == 0) return false;
 
-    const std::string excd = normalize_quote_exchange(exchange);
+    const std::string excd = resolve_quote_exchange(exchange, ticker);
+    const std::string cache_key = market_cache_key(excd, ticker);
+    {
+        std::scoped_lock cache_lock(market_cache_mutex);
+        const auto cached = minute_cache.find(cache_key);
+        if (cached != minute_cache.end()
+            && cached->second.max_records >= max_records
+            && steady_clock::now() - cached->second.stored_at <= minute_cache_ttl) {
+            const size_t first = cached->second.values.size() > max_records
+                ? cached->second.values.size() - max_records
+                : 0;
+            output.assign(cached->second.values.begin() + static_cast<ptrdiff_t>(first),
+                cached->second.values.end());
+            return !output.empty();
+        }
+    }
     std::string keyb;
     bool next_page = false;
     std::unordered_set<std::string> seen;
@@ -778,5 +931,16 @@ bool KISClient::request_overseas_minute_bars(const std::string& appkey, const st
     std::sort(output.begin(), output.end(), [](const auto& lhs, const auto& rhs) {
         return lhs.kr_timestamp < rhs.kr_timestamp;
     });
-    return !output.empty();
+    if (output.empty()) return false;
+    remember_us_exchange(ticker, excd);
+    {
+        std::scoped_lock cache_lock(market_cache_mutex);
+        auto& cached = minute_cache[cache_key];
+        if (max_records >= cached.max_records || cached.values.empty()) {
+            cached.values = output;
+            cached.max_records = max_records;
+        }
+        cached.stored_at = steady_clock::now();
+    }
+    return true;
 }

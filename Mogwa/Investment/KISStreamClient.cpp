@@ -87,11 +87,17 @@ private:
     {
         m1::util::scope_exit reset_running([this]() { _running = false; });
         try {
-            KISClient approval_client;
-            std::string approval_key;
-            if (!approval_client.request_ws_token(app_key, app_secret, approval_key)) {
-                if (on_status) on_status(3, approval_client.getLastError());
-                return;
+            const std::string approval_identity = app_key + '\n' + app_secret;
+            if (_approval_key.empty()
+                || _approval_identity != approval_identity
+                || std::chrono::steady_clock::now() - _approval_issued_at >= std::chrono::hours(23)) {
+                KISClient approval_client;
+                if (!approval_client.request_ws_token(app_key, app_secret, _approval_key)) {
+                    if (on_status) on_status(3, approval_client.getLastError());
+                    return;
+                }
+                _approval_identity = approval_identity;
+                _approval_issued_at = std::chrono::steady_clock::now();
             }
             if (!_running) return;
 
@@ -113,16 +119,22 @@ private:
             if (!_running) return;
 
             std::unordered_set<std::string> subscribed;
+            bool subscription_limit_reached = false;
             for (const auto& item : items) {
                 std::string exchange_prefix = "DNAS";
                 if (item.ovrs_excg_cd == "NYSE" || item.ovrs_excg_cd == "NYS") exchange_prefix = "DNYS";
                 else if (item.ovrs_excg_cd == "AMEX" || item.ovrs_excg_cd == "AMS") exchange_prefix = "DAMS";
 
                 const std::string subscription_key = exchange_prefix + item.ovrs_pdno;
-                if (!subscribed.insert(subscription_key).second) continue;
+                if (subscribed.contains(subscription_key)) continue;
+                if (subscribed.size() >= 40) {
+                    subscription_limit_reached = true;
+                    break;
+                }
+                subscribed.insert(subscription_key);
 
                 boost::json::object header;
-                header["approval_key"] = approval_key;
+                header["approval_key"] = _approval_key;
                 header["custtype"] = "P";
                 header["tr_type"] = "1";
                 header["content-type"] = "utf-8";
@@ -138,9 +150,12 @@ private:
 
                 const std::string payload = boost::json::serialize(root);
                 websocket.write(boost::asio::buffer(payload));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
 
-            if (on_status) on_status(1, {});
+            if (on_status) on_status(1, subscription_limit_reached
+                ? "실시간 구독 한도 40개까지만 연결했습니다."
+                : std::string{});
             boost::beast::flat_buffer buffer;
             while (_running) {
                 buffer.clear();
@@ -168,6 +183,9 @@ private:
         }
         catch (const std::exception& error) {
             TRACE(L"[KISStreamClient] exception: %hs\n", error.what());
+            _approval_key.clear();
+            _approval_identity.clear();
+            _approval_issued_at = {};
             if (on_status && _running) on_status(3, error.what());
         }
     }
@@ -178,6 +196,9 @@ private:
     std::mutex _socket_mutex;
     boost::asio::ip::tcp::socket* _active_socket = nullptr;
     std::thread _worker;
+    std::string _approval_key;
+    std::string _approval_identity;
+    std::chrono::steady_clock::time_point _approval_issued_at;
 };
 
 KISStreamClient::KISStreamClient()

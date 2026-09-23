@@ -14,6 +14,11 @@
 #include <iomanip>
 
 namespace {
+    using steady_clock = std::chrono::steady_clock;
+    constexpr auto balance_cache_ttl = std::chrono::seconds(15);
+    constexpr auto exchange_rate_cache_ttl = std::chrono::minutes(30);
+    constexpr auto advice_cache_ttl = std::chrono::minutes(30);
+
     std::string offset_date_key_tm(const std::string& date, int days)
     {
         if (date.size() != 8) return {};
@@ -116,6 +121,10 @@ bool TradeManager::updateBalance()
         _balance = {};
         return true;
     }
+    if (_balance_updated_at != steady_clock::time_point{}
+        && steady_clock::now() - _balance_updated_at <= balance_cache_ttl) {
+        return true;
+    }
 
     kis_domain::information_balance updated;
     if (!_client->request_balance(_settings.kis_app_key, _settings.kis_app_secret,
@@ -124,6 +133,7 @@ bool TradeManager::updateBalance()
         return false;
     }
     _balance = std::move(updated);
+    _balance_updated_at = steady_clock::now();
     return true;
 }
 
@@ -133,11 +143,17 @@ bool TradeManager::updateExchangeRate()
         _exchange_rate = 0.0;
         return true;
     }
+    if (_exchange_rate > 0
+        && _exchange_rate_updated_at != steady_clock::time_point{}
+        && steady_clock::now() - _exchange_rate_updated_at <= exchange_rate_cache_ttl) {
+        return true;
+    }
 
     double exchange_rate = 0.0;
     if (_client->request_exchange_rate(_settings.kis_app_key, _settings.kis_app_secret,
         _settings.kis_account_number, _settings.kis_account_product_code, _token, exchange_rate)) {
         _exchange_rate = exchange_rate;
+        _exchange_rate_updated_at = steady_clock::now();
         return true;
     }
     _last_error = "환율 조회에 실패했습니다.";
@@ -646,6 +662,11 @@ bool TradeManager::clearKisCredentials()
     _token = {};
     _balance = {};
     _exchange_rate = 0.0;
+    _balance_updated_at = {};
+    _exchange_rate_updated_at = {};
+    _advice_updated_at = {};
+    _advice_signature.clear();
+    _advice_cache.clear();
     _credentials_available = false;
     _last_error.clear();
     return true;
@@ -691,6 +712,11 @@ bool TradeManager::saveKisCredentials(const std::string& app_key, const std::str
         return false;
     }
     _token = std::move(verified_token);
+    _balance = std::move(verified_balance);
+    _balance_updated_at = steady_clock::now();
+    _advice_updated_at = {};
+    _advice_signature.clear();
+    _advice_cache.clear();
     if (!_db_manager->saveToken(_token)) {
         _last_error = "인증 토큰을 로컬 저장소에 저장하지 못했습니다.";
         return false;
@@ -711,6 +737,9 @@ bool TradeManager::saveOpenAiApiKey(const std::string& api_key)
     }
 
     _settings.openai_api_key = api_key;
+    _advice_updated_at = {};
+    _advice_signature.clear();
+    _advice_cache.clear();
     _last_error.clear();
     return true;
 }
@@ -723,6 +752,9 @@ bool TradeManager::clearOpenAiApiKey()
     }
 
     _settings.openai_api_key.clear();
+    _advice_updated_at = {};
+    _advice_signature.clear();
+    _advice_cache.clear();
     _last_error.clear();
     return true;
 }
@@ -732,6 +764,19 @@ bool TradeManager::requestChatGPTAdvice(std::string& output)
     if (_settings.openai_api_key.empty()) {
         output = "OpenAI API Key가 설정되지 않아 AI 분석을 건너뛰었습니다.";
         return false;
+    }
+
+    std::string signature;
+    for (const auto& stock : _balance.stockList) {
+        signature += std::format("{}|{}|{:.6f}|{:.6f};", stock.ovrs_excg_cd,
+            stock.ovrs_pdno, stock.ovrs_cblc_qty, stock.now_pric2);
+    }
+    if (!_advice_cache.empty()
+        && signature == _advice_signature
+        && _advice_updated_at != steady_clock::time_point{}
+        && steady_clock::now() - _advice_updated_at <= advice_cache_ttl) {
+        output = _advice_cache;
+        return true;
     }
 
     m1::gpt_fn::gpt_bot gpt;
@@ -744,7 +789,11 @@ bool TradeManager::requestChatGPTAdvice(std::string& output)
     for (auto& stock : _balance.stockList) {
         gpt.messages.push_back(std::format("종목명: {}, 현재 평가 금액: {:.2f}", stock.ovrs_item_name, stock.now_pric2));
     }
-    return gpt.execute(output);
+    if (!gpt.execute(output)) return false;
+    _advice_signature = std::move(signature);
+    _advice_cache = output;
+    _advice_updated_at = steady_clock::now();
+    return true;
 }
 
 void TradeManager::stopMarketStream()

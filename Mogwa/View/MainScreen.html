@@ -1043,32 +1043,85 @@
         overflow: auto;
         padding-bottom: 4px;
       }
-      .heatmap-table {
-        min-width: 780px;
-        border-collapse: separate;
-        border-spacing: 4px;
+      .calendar-month-nav {
+        display: flex;
+        align-items: center;
+        gap: 10px;
       }
-      .heatmap-table th {
-        position: static;
-        background: transparent;
-        padding: 5px;
+      .calendar-month-label {
+        min-width: 92px;
         text-align: center;
-        font-size: 9px;
+        color: #e7ecf4;
+        font-size: 12px;
+        font-weight: 700;
       }
-      .heatmap-table td {
-        border: 0;
-        padding: 0;
-        text-align: center;
-      }
-      .heat-cell {
-        min-width: 48px;
-        min-height: 38px;
+      .calendar-nav-button {
+        width: 30px;
+        height: 30px;
+        border: 1px solid var(--line);
         border-radius: 8px;
+        background: var(--panel-soft);
+        color: var(--text);
+        cursor: pointer;
+      }
+      .calendar-nav-button:disabled {
+        opacity: 0.3;
+        cursor: default;
+      }
+      .performance-calendar {
+        min-width: 620px;
         display: grid;
-        place-items: center;
-        padding: 5px;
-        font-size: 9px;
-        border: 1px solid rgba(255, 255, 255, 0.04);
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 6px;
+      }
+      .calendar-weekday {
+        padding: 5px 0;
+        color: var(--muted);
+        text-align: center;
+        font-size: 10px;
+        font-weight: 700;
+      }
+      .calendar-weekday:first-child,
+      .calendar-day.sunday .calendar-date {
+        color: #ff9aa4;
+      }
+      .calendar-weekday:nth-child(7),
+      .calendar-day.saturday .calendar-date {
+        color: #8da9ff;
+      }
+      .calendar-day {
+        min-height: 72px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 9px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.018);
+      }
+      .calendar-day.outside {
+        min-height: 72px;
+        border-color: transparent;
+        background: transparent;
+      }
+      .calendar-day.out-of-range {
+        opacity: 0.38;
+      }
+      .calendar-day.today {
+        box-shadow: inset 0 0 0 1px var(--accent);
+      }
+      .calendar-date {
+        color: #d9e0eb;
+        font-size: 10px;
+      }
+      .calendar-return {
+        align-self: flex-end;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .calendar-return.no-data {
+        color: var(--muted);
+        font-weight: 500;
       }
       .component-list {
         display: grid;
@@ -1760,10 +1813,32 @@
           <article class="card chart-card">
             <div class="card-head">
               <div>
-                <div class="card-title">월별 수익률 히트맵</div>
+                <div class="card-title">일별 수익률 캘린더</div>
                 <div class="card-description">
-                  월별 성과를 한눈에 비교합니다. 초록은 상승, 빨강은 하락입니다.
+                  거래일별 수익률을 달력에서 확인합니다. 초록은 상승, 빨강은
+                  하락입니다.
                 </div>
+              </div>
+              <div class="calendar-month-nav" aria-label="성과 달력 월 이동">
+                <button
+                  class="calendar-nav-button"
+                  id="performanceCalendarPrev"
+                  type="button"
+                  aria-label="이전 달"
+                >
+                  &#8249;
+                </button>
+                <span class="calendar-month-label" id="performanceCalendarMonth"
+                  >—</span
+                >
+                <button
+                  class="calendar-nav-button"
+                  id="performanceCalendarNext"
+                  type="button"
+                  aria-label="다음 달"
+                >
+                  &#8250;
+                </button>
               </div>
             </div>
             <div class="heatmap-wrap" id="performanceHeatmap"></div>
@@ -2273,6 +2348,7 @@
           series: [],
           components: [],
           rankMode: "day",
+          calendarMonth: "",
           error: "",
         },
         watchlist: [],
@@ -3850,6 +3926,15 @@
         state.performance.components = Array.isArray(payload.components)
           ? payload.components
           : [];
+        const startMonth = state.performance.startDate.slice(0, 7),
+          endMonth = state.performance.endDate.slice(0, 7);
+        if (
+          !state.performance.calendarMonth ||
+          state.performance.calendarMonth < startMonth ||
+          state.performance.calendarMonth > endMonth
+        ) {
+          state.performance.calendarMonth = endMonth;
+        }
         renderPerformance();
       }
       function performanceDailyRows() {
@@ -4169,54 +4254,96 @@
         const root = $("#performanceHeatmap");
         if (!root) return;
         root.replaceChildren();
-        const months = aggregatePerformance("month"),
-          map = new Map(months.map((item) => [item.period, item.rate]));
-        const years = [
-          ...new Set(months.map((item) => item.period.slice(0, 4))),
-        ].sort();
-        if (!years.length) return;
-        const table = document.createElement("table");
-        table.className = "heatmap-table";
-        const head = document.createElement("thead");
-        head.innerHTML =
-          "<tr><th>연도</th>" +
-          Array.from({ length: 12 }, (_, i) => `<th>${i + 1}월</th>`).join("") +
-          "</tr>";
-        table.append(head);
-        const body = document.createElement("tbody");
-        years.forEach((year) => {
-          const tr = document.createElement("tr");
-          const y = document.createElement("th");
-          y.textContent = year;
-          tr.append(y);
-          for (let month = 1; month <= 12; month++) {
-            const key = `${year}${pad2(month)}`,
-              value = map.get(key);
-            const td = document.createElement("td");
-            const cell = document.createElement("div");
-            cell.className = "heat-cell";
-            if (value === undefined) {
-              cell.textContent = "—";
-              cell.style.color = "var(--muted)";
-            } else {
-              const strength = Math.min(
-                0.32,
-                0.07 + (Math.abs(value) / 20) * 0.25,
-              );
-              cell.style.background =
-                value >= 0
-                  ? `rgba(66,215,163,${strength})`
-                  : `rgba(255,105,120,${strength})`;
-              cell.style.color = value >= 0 ? "#8ce8c7" : "#ff9aa4";
-              cell.textContent = signedPercent(value);
-            }
-            td.append(cell);
-            tr.append(td);
-          }
-          body.append(tr);
+        const daily = performanceDailyRows(),
+          dailyMap = new Map(daily.map((item) => [item.period, item]));
+        const startMonth = state.performance.startDate.slice(0, 7),
+          endMonth = state.performance.endDate.slice(0, 7);
+        if (!startMonth || !endMonth) return;
+
+        let selected = state.performance.calendarMonth || endMonth;
+        selected = selected < startMonth ? startMonth : selected;
+        selected = selected > endMonth ? endMonth : selected;
+        state.performance.calendarMonth = selected;
+
+        const [year, month] = selected.split("-").map(Number),
+          first = new Date(year, month - 1, 1, 12),
+          firstWeekday = first.getDay(),
+          daysInMonth = new Date(year, month, 0, 12).getDate(),
+          cellCount = Math.ceil((firstWeekday + daysInMonth) / 7) * 7,
+          today = apiDate(isoDate(new Date()));
+
+        const label = $("#performanceCalendarMonth");
+        if (label) label.textContent = `${year}년 ${month}월`;
+        const previous = $("#performanceCalendarPrev"),
+          next = $("#performanceCalendarNext");
+        if (previous) previous.disabled = selected <= startMonth;
+        if (next) next.disabled = selected >= endMonth;
+
+        const calendar = document.createElement("div");
+        calendar.className = "performance-calendar";
+        ["일", "월", "화", "수", "목", "금", "토"].forEach((weekday) => {
+          const header = document.createElement("div");
+          header.className = "calendar-weekday";
+          header.textContent = weekday;
+          calendar.append(header);
         });
-        table.append(body);
-        root.append(table);
+
+        for (let index = 0; index < cellCount; index++) {
+          const day = index - firstWeekday + 1,
+            cell = document.createElement("div");
+          if (day < 1 || day > daysInMonth) {
+            cell.className = "calendar-day outside";
+            calendar.append(cell);
+            continue;
+          }
+
+          const date = `${year}${pad2(month)}${pad2(day)}`,
+            iso = `${year}-${pad2(month)}-${pad2(day)}`,
+            row = dailyMap.get(date),
+            weekday = index % 7;
+          cell.className = `calendar-day${weekday === 0 ? " sunday" : ""}${weekday === 6 ? " saturday" : ""}${date === today ? " today" : ""}${iso < state.performance.startDate || iso > state.performance.endDate ? " out-of-range" : ""}`;
+
+          const dateLabel = document.createElement("span");
+          dateLabel.className = "calendar-date";
+          dateLabel.textContent = String(day);
+          const value = document.createElement("span");
+          value.className = "calendar-return";
+          if (row) {
+            const strength = Math.min(
+              0.38,
+              0.08 + (Math.abs(row.rate) / 5) * 0.3,
+            );
+            cell.style.background =
+              row.rate >= 0
+                ? `rgba(66,215,163,${strength})`
+                : `rgba(255,105,120,${strength})`;
+            value.classList.add(row.rate >= 0 ? "positive" : "negative");
+            value.textContent = signedPercent(row.rate);
+            cell.title = `${iso} · ${signedPercent(row.rate)} · ${signedWon(toKrw(row.pnl))}`;
+          } else {
+            value.classList.add("no-data");
+            value.textContent = "—";
+            cell.title = `${iso} · 수익률 데이터 없음`;
+          }
+          cell.append(dateLabel, value);
+          calendar.append(cell);
+        }
+        root.append(calendar);
+      }
+
+      function movePerformanceCalendarMonth(offset) {
+        const selected =
+          state.performance.calendarMonth ||
+          state.performance.endDate.slice(0, 7);
+        if (!selected) return;
+        const [year, month] = selected.split("-").map(Number),
+          target = new Date(year, month - 1 + offset, 1, 12),
+          key = `${target.getFullYear()}-${pad2(target.getMonth() + 1)}`,
+          startMonth = state.performance.startDate.slice(0, 7),
+          endMonth = state.performance.endDate.slice(0, 7);
+        state.performance.calendarMonth =
+          key < startMonth ? startMonth : key > endMonth ? endMonth : key;
+        renderPerformanceHeatmap();
       }
 
       function loadWatchlist() {
@@ -4923,6 +5050,12 @@
           .forEach((item) => item.classList.remove("active"));
         requestPerformanceHistory(true);
       });
+      $("#performanceCalendarPrev").addEventListener("click", () =>
+        movePerformanceCalendarMonth(-1),
+      );
+      $("#performanceCalendarNext").addEventListener("click", () =>
+        movePerformanceCalendarMonth(1),
+      );
       document.querySelectorAll(".rank-tab").forEach((button) =>
         button.addEventListener("click", () => {
           state.performance.rankMode = button.dataset.rank;

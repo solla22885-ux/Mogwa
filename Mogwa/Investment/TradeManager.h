@@ -6,6 +6,7 @@
 #include "AppConfig.h"
 #include "DB/DBManager.h"
 #include <atomic>
+#include <chrono>
 
 #pragma once
 
@@ -33,6 +34,11 @@ private:
     double _exchange_rate = 0.0;
     bool _credentials_available = false;
     std::string _last_error;
+    std::chrono::steady_clock::time_point _balance_updated_at;
+    std::chrono::steady_clock::time_point _exchange_rate_updated_at;
+    std::chrono::steady_clock::time_point _advice_updated_at;
+    std::string _advice_signature;
+    std::string _advice_cache;
 
     std::thread _history_worker;
     std::thread _performance_worker;
