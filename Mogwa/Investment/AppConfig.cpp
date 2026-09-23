@@ -2,6 +2,8 @@
 #include "AppConfig.h"
 
 #include <cstdlib>
+#include <algorithm>
+#include <cctype>
 #include <utility>
 #include <Windows.h>
 #include <wincred.h>
@@ -21,6 +23,24 @@ namespace {
         std::string result(value);
         std::free(value);
         return result;
+    }
+
+    std::string trim_ascii(std::string value)
+    {
+        const auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
+        value.erase(value.begin(), std::find_if(value.begin(), value.end(),
+            [&](unsigned char ch) { return !is_space(ch); }));
+        value.erase(std::find_if(value.rbegin(), value.rend(),
+            [&](unsigned char ch) { return !is_space(ch); }).base(), value.end());
+        return value;
+    }
+
+    std::string masked_key(const std::string& value)
+    {
+        if (value.empty()) return "<empty>";
+        if (value.size() <= 8) return std::string(value.size(), '*') + " len=" + std::to_string(value.size());
+        return value.substr(0, 4) + "..." + value.substr(value.size() - 4)
+            + " len=" + std::to_string(value.size());
     }
 
     bool read_kis_credentials(app_config::settings& output)
@@ -118,24 +138,40 @@ bool app_config::clear_openai_api_key()
 app_config::settings app_config::load()
 {
     settings result;
-    result.kis_app_key = read_environment("MOGWA_KIS_APP_KEY");
-    result.kis_app_secret = read_environment("MOGWA_KIS_APP_SECRET");
-    result.kis_account_number = read_environment("MOGWA_KIS_ACCOUNT_NUMBER");
+    const char* kis_source = "none";
+
+    // UI-saved credentials are authoritative. Environment variables are kept
+    // only as a fallback for developer/CI use so stale environment values cannot
+    // silently override what the user saved in the application.
+    settings stored;
+    if (read_kis_credentials(stored)) {
+        result.kis_app_key = std::move(stored.kis_app_key);
+        result.kis_app_secret = std::move(stored.kis_app_secret);
+        result.kis_account_number = std::move(stored.kis_account_number);
+        result.kis_account_product_code = std::move(stored.kis_account_product_code);
+        kis_source = "WindowsCredential";
+    }
+    else {
+        result.kis_app_key = read_environment("MOGWA_KIS_APP_KEY");
+        result.kis_app_secret = read_environment("MOGWA_KIS_APP_SECRET");
+        result.kis_account_number = read_environment("MOGWA_KIS_ACCOUNT_NUMBER");
+        const std::string product_code = read_environment("MOGWA_KIS_ACCOUNT_PRODUCT_CODE");
+        if (!product_code.empty()) result.kis_account_product_code = product_code;
+        if (result.has_kis_credentials()) kis_source = "Environment";
+    }
+
+    result.kis_app_key = trim_ascii(std::move(result.kis_app_key));
+    result.kis_app_secret = trim_ascii(std::move(result.kis_app_secret));
+    result.kis_account_number = trim_ascii(std::move(result.kis_account_number));
+    result.kis_account_product_code = trim_ascii(std::move(result.kis_account_product_code));
+    if (result.kis_account_product_code.empty()) result.kis_account_product_code = "01";
+
     if (!read_openai_api_key(result.openai_api_key)) {
         result.openai_api_key = read_environment("OPENAI_API_KEY");
     }
 
-    const std::string product_code = read_environment("MOGWA_KIS_ACCOUNT_PRODUCT_CODE");
-    if (!product_code.empty()) result.kis_account_product_code = product_code;
-
-    if (!result.has_kis_credentials()) {
-        settings stored;
-        if (read_kis_credentials(stored)) {
-            result.kis_app_key = std::move(stored.kis_app_key);
-            result.kis_app_secret = std::move(stored.kis_app_secret);
-            result.kis_account_number = std::move(stored.kis_account_number);
-            result.kis_account_product_code = std::move(stored.kis_account_product_code);
-        }
-    }
+    TRACE(L"[AppConfig] KIS credential source=%hs appkey=%hs account_len=%zu product=%hs\n",
+        kis_source, masked_key(result.kis_app_key).c_str(),
+        result.kis_account_number.size(), result.kis_account_product_code.c_str());
     return result;
 }

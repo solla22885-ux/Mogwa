@@ -1048,12 +1048,29 @@
         align-items: center;
         gap: 10px;
       }
+      .calendar-month-summary {
+        min-width: 108px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+      }
       .calendar-month-label {
-        min-width: 92px;
         text-align: center;
         color: #e7ecf4;
         font-size: 12px;
         font-weight: 700;
+      }
+      .calendar-month-return {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .calendar-month-return.positive {
+        color: var(--green);
+      }
+      .calendar-month-return.negative {
+        color: var(--red);
       }
       .calendar-nav-button {
         width: 30px;
@@ -1828,9 +1845,19 @@
                 >
                   &#8249;
                 </button>
-                <span class="calendar-month-label" id="performanceCalendarMonth"
-                  >—</span
-                >
+                <div class="calendar-month-summary">
+                  <span
+                    class="calendar-month-label"
+                    id="performanceCalendarMonth"
+                    >—</span
+                  >
+                  <span
+                    class="calendar-month-return"
+                    id="performanceCalendarReturn"
+                    title="선택 기간에 포함된 해당 월 수익률"
+                    >수익률 —</span
+                  >
+                </div>
                 <button
                   class="calendar-nav-button"
                   id="performanceCalendarNext"
@@ -3124,6 +3151,10 @@
       }
 
       function pushTrend() {
+        // While history is loading, realtime ticks arrive one symbol at a time.
+        // Recording those partial updates mixes balance prices with live prices and
+        // creates a large artificial startup candle.
+        if (state.historyLoading) return;
         const summary = totals();
         if (!Number.isFinite(summary.evaluation) || summary.evaluation <= 0)
           return;
@@ -3534,7 +3565,6 @@
         rebuildStocks();
         state.trend = [];
         state.trendFollowLive = true;
-        pushTrend();
         renderAll(false);
         requestPortfolioHistory(true);
         invalidatePerformance();
@@ -3601,15 +3631,10 @@
           .filter(Boolean)
           .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-        const merged = new Map(
-          historical.map((candle) => [candle.minuteKey, candle]),
-        );
-        state.trend
-          .filter((candle) => !candle.historical)
-          .forEach((candle) => merged.set(candle.minuteKey, candle));
-        state.trend = [...merged.values()].sort((a, b) =>
-          String(a.minuteKey).localeCompare(String(b.minuteKey)),
-        );
+        // Any live candle collected before this response can contain a partial
+        // startup snapshot. Begin from the consistent historical series, then add
+        // one fresh current-value candle below.
+        state.trend = historical;
         state.trendFollowLive = true;
         pushTrend();
         const requested =
@@ -3903,6 +3928,38 @@
       }
       function load_performance_history(payload) {
         state.performance.loading = false;
+
+        const performanceErrors = Array.isArray(payload?.errors)
+          ? payload.errors
+          : [];
+        if (performanceErrors.length) {
+          const failedItems = performanceErrors
+            .map((error) => {
+              const ticker = String(error?.ticker || "알 수 없는 종목").trim();
+              const exchange = String(error?.exchange || "").trim();
+              const message = String(error?.message || "조회 실패").trim();
+              const target = exchange ? `${ticker} (${exchange})` : ticker;
+              return `• ${target}\n  ${message}`;
+            })
+            .join("\n\n");
+
+          const popupText = `성과 데이터 조회 실패 종목 (${performanceErrors.length}개)\n\n${failedItems}`;
+          if (
+            window.chrome?.webview &&
+            typeof window.chrome.webview.postMessage === "function"
+          ) {
+            window.chrome.webview.postMessage(
+              `apps://internal/show_native_message\n${JSON.stringify({
+                title: "성과 데이터 조회 실패",
+                message: popupText,
+                icon: "warning",
+              })}`,
+            );
+          } else {
+            window.alert(popupText);
+          }
+        }
+
         if (!payload?.success || !Array.isArray(payload.series)) {
           state.performance.error =
             payload?.message || "성과 데이터를 불러오지 못했습니다.";
@@ -4274,6 +4331,22 @@
 
         const label = $("#performanceCalendarMonth");
         if (label) label.textContent = `${year}년 ${month}월`;
+        const monthReturn = aggregatePerformance("month").find(
+            (item) => item.period === `${year}${pad2(month)}`,
+          ),
+          monthReturnLabel = $("#performanceCalendarReturn");
+        if (monthReturnLabel) {
+          monthReturnLabel.textContent = monthReturn
+            ? `수익률 ${signedPercent(monthReturn.rate)}`
+            : "수익률 —";
+          monthReturnLabel.className = `calendar-month-return${
+            monthReturn
+              ? monthReturn.rate >= 0
+                ? " positive"
+                : " negative"
+              : ""
+          }`;
+        }
         const previous = $("#performanceCalendarPrev"),
           next = $("#performanceCalendarNext");
         if (previous) previous.disabled = selected <= startMonth;
@@ -4998,9 +5071,9 @@
         saveManualHoldings();
         rebuildStocks();
         syncManualSubscriptions();
+        requestPortfolioHistory(true);
         pushTrend();
         renderAll(false);
-        requestPortfolioHistory(true);
         invalidatePerformance();
         hideManualHolding();
       });
@@ -5027,9 +5100,9 @@
         saveManualHoldings();
         rebuildStocks();
         syncManualSubscriptions();
+        requestPortfolioHistory(true);
         pushTrend();
         renderAll(false);
-        requestPortfolioHistory(true);
         invalidatePerformance();
       });
 

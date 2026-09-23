@@ -64,14 +64,15 @@ bool DBManager::saveToken(const kis_domain::information_token& token)
     }
 
     const char* sql =
-        "REPLACE INTO userinfo (id, access_token, access_token_expired, token_type, expires_in)"
-        " VALUES (1, ?, ?, ?, ?);";
+        "REPLACE INTO userinfo (id, access_token, access_token_expired, token_type, expires_in, app_key_tag)"
+        " VALUES (1, ?, ?, ?, ?, ?);";
 
     std::vector<std::pair<int, std::string>> values;
     values.push_back(std::make_pair(m1::sql_lite::TYPE_TEXT, token.access_token.data()));
     values.push_back(std::make_pair(m1::sql_lite::TYPE_TEXT, token.access_token_expired.data()));
     values.push_back(std::make_pair(m1::sql_lite::TYPE_TEXT, token.token_type.data()));
-    values.push_back(std::make_pair(m1::sql_lite::TYPE_INT, std::to_string(token.expires_in)));
+    values.push_back(std::make_pair(m1::sql_lite::TYPE_INT64, std::to_string(token.expires_in)));
+    values.push_back(std::make_pair(m1::sql_lite::TYPE_TEXT, token.app_key_tag));
 
     error.clear();
 
@@ -92,7 +93,7 @@ bool DBManager::loadToken(kis_domain::information_token& outToken)
     }
 
     const char* sql =
-        "SELECT access_token, access_token_expired, token_type, expires_in "
+        "SELECT access_token, access_token_expired, token_type, expires_in, app_key_tag "
         "FROM userinfo WHERE id = 1;";
 
  
@@ -102,11 +103,12 @@ bool DBManager::loadToken(kis_domain::information_token& outToken)
         m1::sql_lite::TYPE_TEXT,
         m1::sql_lite::TYPE_TEXT,
         m1::sql_lite::TYPE_TEXT,
-        m1::sql_lite::TYPE_INT
+        m1::sql_lite::TYPE_INT64,
+        m1::sql_lite::TYPE_TEXT
     };
 
     std::vector<std::string> values;
-    res = m1::sql_lite::execute_get_stmt(_db, sql, types, values, error) && values.size() == 4;
+    res = m1::sql_lite::execute_get_stmt(_db, sql, types, values, error) && values.size() == 5;
 
     if (res) {
         outToken.ready = true;
@@ -115,12 +117,21 @@ bool DBManager::loadToken(kis_domain::information_token& outToken)
         outToken.token_type = values[2];
         try {
             outToken.expires_in = std::stoll(values[3]);
+            outToken.app_key_tag = values[4];
         }
         catch (const std::exception&) {
             return false;
         }
     }
     return res;
+}
+
+bool DBManager::clearToken()
+{
+    if (!_db) return false;
+    std::string error;
+    if (!ensureTokenSchema(error)) return false;
+    return m1::sql_lite::execute_sql(_db, "DELETE FROM userinfo WHERE id = 1;", error);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -138,7 +149,22 @@ bool DBManager::ensureTokenSchema(std::string& error)
           access_token_expired TEXT NOT NULL,
           token_type TEXT NOT NULL,
           expires_in INTEGER NOT NULL,
+          app_key_tag TEXT NOT NULL DEFAULT '',
           updated_at TEXT DEFAULT (datetime('now','localtime'))
         );)SQL";
-    return m1::sql_lite::execute_sql(_db, schema, error);
+    if (!m1::sql_lite::execute_sql(_db, schema, error)) return false;
+
+    // Migration for databases created by older builds. SQLite has no
+    // ADD COLUMN IF NOT EXISTS on the versions we support, so duplicate-column
+    // is the expected success case after the first migration.
+    std::string migration_error;
+    if (!m1::sql_lite::execute_sql(_db,
+        "ALTER TABLE userinfo ADD COLUMN app_key_tag TEXT NOT NULL DEFAULT '';", migration_error)) {
+        if (migration_error.find("duplicate column name") == std::string::npos) {
+            error = migration_error;
+            return false;
+        }
+    }
+    error.clear();
+    return true;
 }

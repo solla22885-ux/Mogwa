@@ -1,4 +1,4 @@
-// TradeManager.cpp: TradeManager 구현 파일.
+﻿// TradeManager.cpp: TradeManager 구현 파일.
 
 #include "pch.h"
 #include "TradeManager.h"
@@ -7,6 +7,8 @@
 #include "lib/chat_gpt_fn.h"
 #include <chrono>
 #include <algorithm>
+#include <cctype>
+#include <ctime>
 #include <boost/json.hpp>
 #include <map>
 #include <unordered_map>
@@ -46,6 +48,73 @@ namespace {
         result << std::put_time(&local, "%Y%m%d");
         return result.str();
     }
+
+    bool is_us_daytime_session_kst()
+    {
+        const std::time_t now = std::time(nullptr);
+        std::tm utc{};
+        gmtime_s(&utc, &now);
+        const int korea_hour = (utc.tm_hour + 9) % 24;
+        const int minutes = korea_hour * 60 + utc.tm_min;
+        return minutes >= 10 * 60 && minutes < 18 * 60;
+    }
+
+    std::string realtime_quote_exchange(const std::string& exchange)
+    {
+        if (!is_us_daytime_session_kst()) return exchange;
+
+        std::string upper = exchange;
+        std::transform(upper.begin(), upper.end(), upper.begin(),
+            [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        if (upper == "NASD" || upper == "NASDAQ" || upper == "NAS" || upper == "BAQ") return "BAQ";
+        if (upper == "NYSE" || upper == "NYS" || upper == "BAY") return "BAY";
+        if (upper == "AMEX" || upper == "AMS" || upper == "BAA") return "BAA";
+        return exchange;
+    }
+
+
+    constexpr auto token_refresh_margin = std::chrono::minutes(5);
+
+    bool parse_kis_token_expiry(const std::string& value, std::time_t& expiry_utc)
+    {
+        if (value.empty()) return false;
+        std::tm kst{};
+        std::istringstream input(value);
+        input >> std::get_time(&kst, "%Y-%m-%d %H:%M:%S");
+        if (input.fail()) return false;
+
+        // KIS returns access_token_token_expired in Korea Standard Time. Interpret the
+        // fields as UTC first and subtract KST offset so the check is independent of
+        // the Windows machine's configured time zone.
+        const std::time_t kst_as_utc = _mkgmtime(&kst);
+        if (kst_as_utc == static_cast<std::time_t>(-1)) return false;
+        expiry_utc = kst_as_utc - 9 * 60 * 60;
+        return true;
+    }
+
+    bool token_needs_refresh(const kis_domain::information_token& token)
+    {
+        if (!token.ready || token.access_token.empty()) return true;
+        std::time_t expiry = 0;
+        if (!parse_kis_token_expiry(token.access_token_expired, expiry)) return true;
+        const std::time_t now = std::time(nullptr);
+        return std::difftime(expiry, now) <=
+            std::chrono::duration_cast<std::chrono::seconds>(token_refresh_margin).count();
+    }
+
+    std::string masked_app_key(const std::string& key)
+    {
+        if (key.empty()) return "<empty>";
+        if (key.size() <= 8) return std::string(key.size(), '*') + " len=" + std::to_string(key.size());
+        return key.substr(0, 4) + "..." + key.substr(key.size() - 4)
+            + " len=" + std::to_string(key.size());
+    }
+
+    bool token_matches_app_key(const kis_domain::information_token& token, const std::string& app_key)
+    {
+        return !token.app_key_tag.empty()
+            && token.app_key_tag == kis_domain::make_app_key_tag(app_key);
+    }
 }
 
 TradeManager::TradeManager(HWND parent) :
@@ -67,6 +136,70 @@ TradeManager::~TradeManager()
 
 ////////////////////////////////////////////////////////////////////////////////
 
+bool TradeManager::requestAndStoreAccessTokenLocked()
+{
+    if (!_client || !_db_manager) {
+        _last_error = "필수 인증 서비스가 생성되지 않았습니다.";
+        return false;
+    }
+
+    KISClient auth_client;
+    kis_domain::information_token new_token;
+    if (!auth_client.request_token(_settings.kis_app_key, _settings.kis_app_secret, new_token)) {
+        const std::string detail = auth_client.getLastError();
+        const std::string key_hint = masked_app_key(_settings.kis_app_key);
+        _last_error = "[토큰 발급 단계, AppKey " + key_hint + "] "
+            + (detail.empty() ? "한국투자증권 인증 토큰 발급에 실패했습니다." : detail);
+        return false;
+    }
+
+    if (!_db_manager->saveToken(new_token)) {
+        _last_error = "인증 토큰을 로컬 저장소에 저장하지 못했습니다.";
+        return false;
+    }
+
+    _token = std::move(new_token);
+    TRACE(L"[TradeManager] KIS access token refreshed. expires=%hs\n",
+        _token.access_token_expired.c_str());
+    return true;
+}
+
+bool TradeManager::ensureAccessToken(bool force_refresh)
+{
+    if (!_credentials_available) return false;
+
+    std::scoped_lock token_lock(_token_mutex);
+    if (!force_refresh && !token_needs_refresh(_token)) {
+        return true;
+    }
+    return requestAndStoreAccessTokenLocked();
+}
+
+bool TradeManager::refreshAccessTokenAfterExpiration(
+    const kis_domain::information_token& rejected_token, std::string* error)
+{
+    std::scoped_lock token_lock(_token_mutex);
+
+    // Another worker may already have refreshed the shared token while this request
+    // was in flight. In that case reuse it instead of issuing another token request.
+    if (_token.ready && _token.access_token != rejected_token.access_token
+        && !token_needs_refresh(_token)) {
+        if (error) error->clear();
+        return true;
+    }
+
+    TRACE(L"[TradeManager] KIS server reported expired access token; refreshing.\n");
+    const bool refreshed = requestAndStoreAccessTokenLocked();
+    if (error) *error = refreshed ? std::string{} : _last_error;
+    return refreshed;
+}
+
+kis_domain::information_token TradeManager::accessTokenSnapshot() const
+{
+    std::scoped_lock token_lock(_token_mutex);
+    return _token;
+}
+
 bool TradeManager::initialize(bool force_token_refresh)
 {
     _settings = app_config::load();
@@ -87,32 +220,22 @@ bool TradeManager::initialize(bool force_token_refresh)
         return false;
     }
 
-    bool needs_token = true;
-    if (!force_token_refresh && _db_manager->loadToken(_token)) {
-        std::tm tm = {};
-        std::istringstream ss(_token.access_token_expired);
-        ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
-        if (!ss.fail()) {
-            const std::time_t expired_time = std::mktime(&tm);
-            const std::time_t now = std::time(nullptr);
-            // Renew ahead of expiry to avoid failing a request in flight.
-            needs_token = std::difftime(expired_time, now) < 300.0;
+    if (!force_token_refresh) {
+        kis_domain::information_token cached_token;
+        if (_db_manager->loadToken(cached_token)) {
+            if (token_matches_app_key(cached_token, _settings.kis_app_key)
+                && !token_needs_refresh(cached_token)) {
+                std::scoped_lock token_lock(_token_mutex);
+                _token = std::move(cached_token);
+                TRACE(L"[TradeManager] Reusing cached KIS token for matching AppKey.\n");
+                return true;
+            }
+            TRACE(L"[TradeManager] Discarding cached KIS token: AppKey mismatch, legacy cache, or expiration.\n");
+            _db_manager->clearToken();
         }
     }
 
-    if (needs_token) {
-        kis_domain::information_token new_token;
-        if (!_client->request_token(_settings.kis_app_key, _settings.kis_app_secret, new_token)) {
-            _last_error = "한국투자증권 인증 토큰 발급에 실패했습니다.";
-            return false;
-        }
-        _token = std::move(new_token);
-        if (!_db_manager->saveToken(_token)) {
-            _last_error = "인증 토큰을 로컬 저장소에 저장하지 못했습니다.";
-            return false;
-        }
-    }
-    return true;
+    return ensureAccessToken(true);
 }
 
 bool TradeManager::updateBalance()
@@ -126,10 +249,22 @@ bool TradeManager::updateBalance()
         return true;
     }
 
+    if (!ensureAccessToken()) return false;
+
+    KISClient client;
+    kis_domain::information_token token = accessTokenSnapshot();
     kis_domain::information_balance updated;
-    if (!_client->request_balance(_settings.kis_app_key, _settings.kis_app_secret,
-        _settings.kis_account_number, _settings.kis_account_product_code, _token, updated)) {
-        _last_error = "잔고 조회에 실패했습니다.";
+    bool loaded = client.request_balance(_settings.kis_app_key, _settings.kis_app_secret,
+        _settings.kis_account_number, _settings.kis_account_product_code, token, updated);
+    if (!loaded && client.isLastErrorTokenExpired()) {
+        if (!refreshAccessTokenAfterExpiration(token)) return false;
+        token = accessTokenSnapshot();
+        loaded = client.request_balance(_settings.kis_app_key, _settings.kis_app_secret,
+            _settings.kis_account_number, _settings.kis_account_product_code, token, updated);
+    }
+    if (!loaded) {
+        const std::string detail = client.getLastError();
+        _last_error = detail.empty() ? "잔고 조회에 실패했습니다." : detail;
         return false;
     }
     _balance = std::move(updated);
@@ -149,14 +284,26 @@ bool TradeManager::updateExchangeRate()
         return true;
     }
 
+    if (!ensureAccessToken()) return false;
+
+    KISClient client;
+    kis_domain::information_token token = accessTokenSnapshot();
     double exchange_rate = 0.0;
-    if (_client->request_exchange_rate(_settings.kis_app_key, _settings.kis_app_secret,
-        _settings.kis_account_number, _settings.kis_account_product_code, _token, exchange_rate)) {
+    bool loaded = client.request_exchange_rate(_settings.kis_app_key, _settings.kis_app_secret,
+        _settings.kis_account_number, _settings.kis_account_product_code, token, exchange_rate);
+    if (!loaded && client.isLastErrorTokenExpired()) {
+        if (!refreshAccessTokenAfterExpiration(token)) return false;
+        token = accessTokenSnapshot();
+        loaded = client.request_exchange_rate(_settings.kis_app_key, _settings.kis_app_secret,
+            _settings.kis_account_number, _settings.kis_account_product_code, token, exchange_rate);
+    }
+    if (loaded) {
         _exchange_rate = exchange_rate;
         _exchange_rate_updated_at = steady_clock::now();
         return true;
     }
-    _last_error = "환율 조회에 실패했습니다.";
+    const std::string detail = client.getLastError();
+    _last_error = detail.empty() ? "환율 조회에 실패했습니다." : detail;
     return false;
 }
 
@@ -168,6 +315,10 @@ bool TradeManager::runMarketStream()
     if (!_stream_client || !_credentials_available || subscriptions.empty()) {
         return false;
     }
+
+    // Publish the connecting state before the worker starts. Otherwise the worker can
+    // report "connected" first and this function can overwrite it with "connecting".
+    PostMessage(_parent, WM_RECEIVE_STREAM_STATUS, static_cast<WPARAM>(stream_status::connecting), 0);
 
     const bool started = _stream_client->start(
         _settings.kis_app_key,
@@ -181,9 +332,6 @@ bool TradeManager::runMarketStream()
                 message.release();
             }
         });
-    if (started) {
-        PostMessage(_parent, WM_RECEIVE_STREAM_STATUS, static_cast<WPARAM>(stream_status::connecting), 0);
-    }
     return started;
 }
 
@@ -228,9 +376,10 @@ bool TradeManager::restartMarketStream()
 
 bool TradeManager::requestPortfolioHistory(std::vector<portfolio_holding> holdings)
 {
-    if (!_credentials_available || !_token.ready || holdings.empty()) {
+    if (!_credentials_available || holdings.empty()) {
         return false;
     }
+    if (!ensureAccessToken()) return false;
 
     holdings.erase(std::remove_if(holdings.begin(), holdings.end(), [](const portfolio_holding& item) {
         return item.ticker.empty() || item.quantity <= 0;
@@ -247,10 +396,9 @@ bool TradeManager::requestPortfolioHistory(std::vector<portfolio_holding> holdin
 
     const std::string app_key = _settings.kis_app_key;
     const std::string app_secret = _settings.kis_app_secret;
-    const kis_domain::information_token token = _token;
     const HWND parent = _parent;
 
-    _history_worker = std::thread([this, parent, app_key, app_secret, token, holdings = std::move(holdings)]() {
+    _history_worker = std::thread([this, parent, app_key, app_secret, holdings = std::move(holdings)]() {
         try {
         struct aggregate_bar {
             double open = 0;
@@ -266,21 +414,40 @@ bool TradeManager::requestPortfolioHistory(std::vector<portfolio_holding> holdin
         size_t reflected = 0;
 
         KISClient history_client;
+        kis_domain::information_token token = accessTokenSnapshot();
+        std::string token_refresh_error;
+        const auto request_minute_bars = [&](const std::string& request_exchange,
+            const std::string& ticker, std::vector<kis_domain::minute_bar>& bars) {
+            if (!token_refresh_error.empty()) return false;
+            if (history_client.request_overseas_minute_bars(
+                app_key, app_secret, token, request_exchange, ticker, bars, 480)) {
+                return true;
+            }
+            if (!history_client.isLastErrorTokenExpired()) return false;
+            if (!refreshAccessTokenAfterExpiration(token, &token_refresh_error)) {
+                return false;
+            }
+            token_refresh_error.clear();
+            token = accessTokenSnapshot();
+            bars.clear();
+            return history_client.request_overseas_minute_bars(
+                app_key, app_secret, token, request_exchange, ticker, bars, 480);
+        };
+
         for (const auto& holding : holdings) {
             std::vector<kis_domain::minute_bar> bars;
             std::string resolved_exchange = holding.exchange;
-            bool loaded = history_client.request_overseas_minute_bars(
-                app_key, app_secret, token, resolved_exchange, holding.ticker, bars, 480);
+            bool loaded = request_minute_bars(resolved_exchange, holding.ticker, bars);
 
             // 수동 등록 종목에서 거래소를 US/USA로 입력한 경우 실제 미국 거래소를 순서대로 시도합니다.
             std::string exchange_upper = holding.exchange;
             std::transform(exchange_upper.begin(), exchange_upper.end(), exchange_upper.begin(),
                 [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
-            if (!loaded && (exchange_upper.empty() || exchange_upper == "US" || exchange_upper == "USA")) {
+            if (!loaded && token_refresh_error.empty()
+                && (exchange_upper.empty() || exchange_upper == "US" || exchange_upper == "USA")) {
                 for (const char* fallback_exchange : { "NASD", "NYSE", "AMEX" }) {
                     bars.clear();
-                    if (history_client.request_overseas_minute_bars(
-                        app_key, app_secret, token, fallback_exchange, holding.ticker, bars, 480)) {
+                    if (request_minute_bars(fallback_exchange, holding.ticker, bars)) {
                         loaded = true;
                         resolved_exchange = fallback_exchange;
                         break;
@@ -292,7 +459,9 @@ bool TradeManager::requestPortfolioHistory(std::vector<portfolio_holding> holdin
                 boost::json::object error;
                 error["ticker"] = holding.ticker;
                 error["exchange"] = holding.exchange;
-                error["message"] = history_client.getLastError();
+                error["message"] = token_refresh_error.empty()
+                    ? history_client.getLastError()
+                    : token_refresh_error;
                 errors.push_back(std::move(error));
                 continue;
             }
@@ -381,10 +550,11 @@ bool TradeManager::requestPortfolioHistory(std::vector<portfolio_holding> holdin
 bool TradeManager::requestPortfolioPerformance(std::vector<portfolio_holding> holdings,
     const std::string& start_date, const std::string& end_date)
 {
-    if (!_credentials_available || !_token.ready || holdings.empty()
+    if (!_credentials_available || holdings.empty()
         || start_date.size() != 8 || end_date.size() != 8 || start_date > end_date) {
         return false;
     }
+    if (!ensureAccessToken()) return false;
 
     holdings.erase(std::remove_if(holdings.begin(), holdings.end(), [](const portfolio_holding& item) {
         return item.ticker.empty() || item.quantity <= 0;
@@ -397,10 +567,9 @@ bool TradeManager::requestPortfolioPerformance(std::vector<portfolio_holding> ho
 
     const std::string app_key = _settings.kis_app_key;
     const std::string app_secret = _settings.kis_app_secret;
-    const kis_domain::information_token token = _token;
     const HWND parent = _parent;
 
-    _performance_worker = std::thread([this, parent, app_key, app_secret, token,
+    _performance_worker = std::thread([this, parent, app_key, app_secret,
         start_date, end_date, holdings = std::move(holdings)]() {
         try {
             struct aggregate_bar {
@@ -424,23 +593,41 @@ bool TradeManager::requestPortfolioPerformance(std::vector<portfolio_holding> ho
             boost::json::array errors;
             size_t reflected = 0;
             KISClient history_client;
+            kis_domain::information_token token = accessTokenSnapshot();
+            std::string token_refresh_error;
+            const auto request_daily_bars = [&](const std::string& request_exchange,
+                const std::string& ticker, std::vector<kis_domain::daily_bar>& bars) {
+                if (!token_refresh_error.empty()) return false;
+                if (history_client.request_overseas_daily_bars(
+                    app_key, app_secret, token, request_exchange, ticker,
+                    buffered_start.empty() ? start_date : buffered_start, end_date, bars, 2200)) {
+                    return true;
+                }
+                if (!history_client.isLastErrorTokenExpired()) return false;
+                if (!refreshAccessTokenAfterExpiration(token, &token_refresh_error)) {
+                    return false;
+                }
+                token_refresh_error.clear();
+                token = accessTokenSnapshot();
+                bars.clear();
+                return history_client.request_overseas_daily_bars(
+                    app_key, app_secret, token, request_exchange, ticker,
+                    buffered_start.empty() ? start_date : buffered_start, end_date, bars, 2200);
+            };
 
             for (const auto& holding : holdings) {
                 std::vector<kis_domain::daily_bar> bars;
                 std::string resolved_exchange = holding.exchange;
-                bool loaded = history_client.request_overseas_daily_bars(
-                    app_key, app_secret, token, resolved_exchange, holding.ticker,
-                    buffered_start.empty() ? start_date : buffered_start, end_date, bars, 2200);
+                bool loaded = request_daily_bars(resolved_exchange, holding.ticker, bars);
 
                 std::string exchange_upper = holding.exchange;
                 std::transform(exchange_upper.begin(), exchange_upper.end(), exchange_upper.begin(),
                     [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
-                if (!loaded && (exchange_upper.empty() || exchange_upper == "US" || exchange_upper == "USA")) {
+                if (!loaded && token_refresh_error.empty()
+                    && (exchange_upper.empty() || exchange_upper == "US" || exchange_upper == "USA")) {
                     for (const char* fallback_exchange : { "NASD", "NYSE", "AMEX" }) {
                         bars.clear();
-                        if (history_client.request_overseas_daily_bars(
-                            app_key, app_secret, token, fallback_exchange, holding.ticker,
-                            buffered_start.empty() ? start_date : buffered_start, end_date, bars, 2200)) {
+                        if (request_daily_bars(fallback_exchange, holding.ticker, bars)) {
                             loaded = true;
                             resolved_exchange = fallback_exchange;
                             break;
@@ -452,7 +639,9 @@ bool TradeManager::requestPortfolioPerformance(std::vector<portfolio_holding> ho
                     boost::json::object error;
                     error["ticker"] = holding.ticker;
                     error["exchange"] = holding.exchange;
-                    error["message"] = history_client.getLastError();
+                    error["message"] = token_refresh_error.empty()
+                        ? history_client.getLastError()
+                        : token_refresh_error;
                     errors.push_back(std::move(error));
                     continue;
                 }
@@ -580,26 +769,93 @@ bool TradeManager::requestPortfolioPerformance(std::vector<portfolio_holding> ho
 
 bool TradeManager::requestRealtimeQuote(const std::string& ticker, const std::string& exchange)
 {
-    if (!_credentials_available || !_token.ready || ticker.empty()) return false;
+    if (!_credentials_available || ticker.empty()) return false;
+    if (!ensureAccessToken()) return false;
     bool expected = false;
     if (!_quote_loading.compare_exchange_strong(expected, true)) return false;
     if (_quote_worker.joinable()) _quote_worker.join();
 
     const std::string app_key = _settings.kis_app_key;
     const std::string app_secret = _settings.kis_app_secret;
-    const kis_domain::information_token token = _token;
     const HWND parent = _parent;
 
-    _quote_worker = std::thread([this, parent, app_key, app_secret, token, ticker, exchange]() {
+    _quote_worker = std::thread([this, parent, app_key, app_secret, ticker, exchange]() {
         boost::json::object result;
         try {
             KISClient client;
+            kis_domain::information_token token = accessTokenSnapshot();
+            std::string token_refresh_error;
             kis_domain::overseas_quote quote;
             std::vector<kis_domain::minute_bar> bars;
-            const bool quote_ok = client.request_overseas_quote(app_key, app_secret, token, exchange, ticker, quote);
-            const std::string quote_error = quote_ok ? std::string{} : client.getLastError();
-            const bool bars_ok = client.request_overseas_minute_bars(app_key, app_secret, token, exchange, ticker, bars, 240);
-            const std::string bars_error = bars_ok ? std::string{} : client.getLastError();
+
+            const auto request_quote = [&](const std::string& request_exchange) {
+                if (!token_refresh_error.empty()) return false;
+                if (client.request_overseas_quote(
+                    app_key, app_secret, token, request_exchange, ticker, quote)) {
+                    return true;
+                }
+                if (!client.isLastErrorTokenExpired()) return false;
+                if (!refreshAccessTokenAfterExpiration(token, &token_refresh_error)) {
+                    return false;
+                }
+                token_refresh_error.clear();
+                token = accessTokenSnapshot();
+                return client.request_overseas_quote(
+                    app_key, app_secret, token, request_exchange, ticker, quote);
+            };
+            const auto request_bars = [&](const std::string& request_exchange) {
+                bars.clear();
+                if (!token_refresh_error.empty()) return false;
+                if (client.request_overseas_minute_bars(
+                    app_key, app_secret, token, request_exchange, ticker, bars, 240)) {
+                    return true;
+                }
+                if (!client.isLastErrorTokenExpired()) return false;
+                if (!refreshAccessTokenAfterExpiration(token, &token_refresh_error)) {
+                    return false;
+                }
+                token_refresh_error.clear();
+                token = accessTokenSnapshot();
+                bars.clear();
+                return client.request_overseas_minute_bars(
+                    app_key, app_secret, token, request_exchange, ticker, bars, 240);
+            };
+
+            // KIS uses separate quote exchange codes for the US daytime session
+            // (NASDAQ BAQ / NYSE BAY / AMEX BAA). The normal NAS/NYS/AMS codes
+            // can remain at the previous close during this session.
+            const std::string market_exchange = realtime_quote_exchange(exchange);
+            bool quote_ok = request_quote(market_exchange);
+            std::string quote_error = quote_ok
+                ? std::string{}
+                : (token_refresh_error.empty() ? client.getLastError() : token_refresh_error);
+            bool quote_from_daytime = quote_ok && market_exchange != exchange;
+            if (!quote_ok && token_refresh_error.empty() && market_exchange != exchange) {
+                quote_ok = request_quote(exchange);
+                if (quote_ok) {
+                    quote_error.clear();
+                    quote_from_daytime = false;
+                }
+                else if (quote_error.empty()) {
+                    quote_error = client.getLastError();
+                }
+            }
+
+            bool bars_ok = request_bars(market_exchange);
+            std::string bars_error = bars_ok
+                ? std::string{}
+                : (token_refresh_error.empty() ? client.getLastError() : token_refresh_error);
+            bool bars_from_daytime = bars_ok && market_exchange != exchange;
+            if (!bars_ok && token_refresh_error.empty() && market_exchange != exchange) {
+                bars_ok = request_bars(exchange);
+                if (bars_ok) {
+                    bars_error.clear();
+                    bars_from_daytime = false;
+                }
+                else if (bars_error.empty()) {
+                    bars_error = client.getLastError();
+                }
+            }
 
             result["success"] = quote_ok || bars_ok;
             result["ticker"] = ticker;
@@ -632,7 +888,11 @@ bool TradeManager::requestRealtimeQuote(const std::string& ticker, const std::st
             result["candles"] = std::move(candles);
             if (!quote_ok && !bars_ok) result["message"] = quote_error.empty() ? bars_error : quote_error;
             else if (!quote_ok) result["message"] = "실시간 스냅샷은 대기 중이며 최근 분봉을 표시합니다.";
-            else if (!bars_ok) result["message"] = "현재가는 조회했지만 과거 1분봉을 불러오지 못했습니다.";
+            else if (!bars_ok) result["message"] = quote_from_daytime
+                ? "미국 주간거래 현재가는 조회했지만 최근 1분봉을 불러오지 못했습니다."
+                : "현재가는 조회했지만 과거 1분봉을 불러오지 못했습니다.";
+            else if (quote_from_daytime || bars_from_daytime)
+                result["message"] = "미국 주간거래 현재가와 최근 1분봉을 불러왔습니다.";
             else result["message"] = "현재가와 최근 1분봉을 불러왔습니다.";
         }
         catch (const std::exception& error) {
@@ -659,7 +919,14 @@ bool TradeManager::clearKisCredentials()
     _settings.kis_app_secret.clear();
     _settings.kis_account_number.clear();
     _settings.kis_account_product_code = "01";
-    _token = {};
+    {
+        std::scoped_lock token_lock(_token_mutex);
+        _token = {};
+    }
+    if (_db_manager) {
+        _db_manager->initialize();
+        _db_manager->clearToken();
+    }
     _balance = {};
     _exchange_rate = 0.0;
     _balance_updated_at = {};
@@ -689,38 +956,49 @@ bool TradeManager::saveKisCredentials(const std::string& app_key, const std::str
     kis_domain::information_token verified_token;
     if (!_client || !_client->request_token(updated.kis_app_key, updated.kis_app_secret, verified_token)) {
         const std::string detail = _client ? _client->getLastError() : std::string{};
-        _last_error = detail.empty() ? "App Key와 App Secret을 확인하지 못했습니다." : detail;
+        _last_error = "[토큰 발급 검증 단계, AppKey " + masked_app_key(updated.kis_app_key) + "] "
+            + (detail.empty() ? "App Key와 App Secret을 확인하지 못했습니다." : detail);
         return false;
     }
     kis_domain::information_balance verified_balance;
     if (!_client->request_balance(updated.kis_app_key, updated.kis_app_secret,
         updated.kis_account_number, updated.kis_account_product_code, verified_token, verified_balance)) {
-        _last_error = "계좌번호와 상품코드를 확인하지 못했습니다.";
+        const std::string detail = _client->getLastError();
+        _last_error = "[계좌 검증 단계, AppKey " + masked_app_key(updated.kis_app_key) + "] "
+            + (detail.empty() ? "계좌번호와 상품코드를 확인하지 못했습니다." : detail);
         return false;
     }
-    if (!app_config::store_kis_credentials(updated)) {
-        _last_error = "Windows 자격 증명 저장소에 인증정보를 저장하지 못했습니다.";
-        return false;
-    }
-
-    stopMarketStream();
-    _settings = std::move(updated);
-    _credentials_available = true;
-    _last_error.clear();
+    const kis_domain::information_token previous_token = accessTokenSnapshot();
     if (!_db_manager || !_db_manager->initialize()) {
         _last_error = "로컬 토큰 저장소를 초기화하지 못했습니다.";
         return false;
     }
-    _token = std::move(verified_token);
+    if (!_db_manager->saveToken(verified_token)) {
+        _last_error = "인증 토큰을 로컬 저장소에 저장하지 못했습니다.";
+        return false;
+    }
+    if (!app_config::store_kis_credentials(updated)) {
+        if (previous_token.ready) _db_manager->saveToken(previous_token);
+        else _db_manager->clearToken();
+        _last_error = "Windows 자격 증명 저장소에 인증정보를 저장하지 못했습니다.";
+        return false;
+    }
+
+    // Do not mutate the live configuration until validation and both persistent
+    // writes have succeeded. A failed save must leave the existing session usable.
+    stopMarketStream();
+    _settings = std::move(updated);
+    _credentials_available = true;
+    _last_error.clear();
+    {
+        std::scoped_lock token_lock(_token_mutex);
+        _token = std::move(verified_token);
+    }
     _balance = std::move(verified_balance);
     _balance_updated_at = steady_clock::now();
     _advice_updated_at = {};
     _advice_signature.clear();
     _advice_cache.clear();
-    if (!_db_manager->saveToken(_token)) {
-        _last_error = "인증 토큰을 로컬 저장소에 저장하지 못했습니다.";
-        return false;
-    }
     return true;
 }
 

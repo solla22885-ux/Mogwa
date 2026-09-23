@@ -5,14 +5,28 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <string_view>
 
 namespace kis_domain {
+    inline std::string make_app_key_tag(std::string_view app_key)
+    {
+        // Stable, non-secret identifier used only to bind a cached token to the
+        // AppKey that created it. Do not persist the raw AppKey in localdata.db.
+        uint64_t hash = 1469598103934665603ULL;
+        for (const unsigned char ch : app_key) {
+            hash ^= ch;
+            hash *= 1099511628211ULL;
+        }
+        return std::to_string(hash);
+    }
+
     struct information_token {
         bool ready = false;
         std::string access_token;
         std::string access_token_expired;
         std::string token_type;
         int64_t expires_in = 0;
+        std::string app_key_tag;
     };
 
     struct balance_item1 {

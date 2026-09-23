@@ -47,6 +47,13 @@ public:
         const std::string& ticker, kis_domain::overseas_quote& output);
 
     const std::string& getLastError() const noexcept { return _last_error; }
+    const std::string& getLastErrorCode() const noexcept { return _last_error_code; }
+    bool isLastErrorTokenExpired() const noexcept {
+        return _last_error_code == "EGW00123"
+            || _last_error.find("기간이 만료된 token") != std::string::npos
+            || _last_error.find("만료된 토큰") != std::string::npos;
+    }
 private:
     std::string _last_error;
+    std::string _last_error_code;
 };

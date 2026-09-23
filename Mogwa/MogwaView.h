@@ -2,11 +2,26 @@
 //
 
 #include <L2Webview/L2WebviewListener.h>
+#include <string_view>
 
 #pragma once
 
 namespace scheme {
 	inline constexpr std::wstring_view document_load = L"m2_document_load";
+}
+
+namespace webview_message {
+    inline constexpr std::wstring_view show_native_message = L"show_native_message\n";
+    inline constexpr std::wstring_view retry_kis_stream = L"retry_kis_stream";
+    inline constexpr std::wstring_view clear_kis_credentials = L"clear_kis_credentials";
+    inline constexpr std::wstring_view clear_openai_api_key = L"clear_openai_api_key";
+    inline constexpr std::wstring_view save_openai_api_key = L"save_openai_api_key\n";
+    inline constexpr std::wstring_view sync_manual_holdings = L"sync_manual_holdings\n";
+    inline constexpr std::wstring_view sync_realtime_watchlist = L"sync_realtime_watchlist\n";
+    inline constexpr std::wstring_view load_portfolio_history = L"load_portfolio_history\n";
+    inline constexpr std::wstring_view load_performance_history = L"load_performance_history\n";
+    inline constexpr std::wstring_view request_realtime_quote = L"request_realtime_quote\n";
+    inline constexpr std::wstring_view save_kis_credentials = L"save_kis_credentials\n";
 }
 
 class L2WebviewController;

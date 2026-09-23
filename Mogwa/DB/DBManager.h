@@ -19,6 +19,7 @@ public:
     bool initialize();
     bool saveToken(const kis_domain::information_token& token);
     bool loadToken(kis_domain::information_token& outToken);
+    bool clearToken();
 private:
     bool ensureTokenSchema(std::string& error);
 };

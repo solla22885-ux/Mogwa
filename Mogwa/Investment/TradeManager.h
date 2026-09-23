@@ -7,6 +7,7 @@
 #include "DB/DBManager.h"
 #include <atomic>
 #include <chrono>
+#include <mutex>
 
 #pragma once
 
@@ -28,6 +29,7 @@ private:
     std::shared_ptr<KISClient> _client;
     std::unique_ptr<KISStreamClient> _stream_client;
     kis_domain::information_token _token;
+    mutable std::mutex _token_mutex;
     kis_domain::information_balance _balance;
     std::shared_ptr<DBManager> _db_manager;
     app_config::settings _settings;
@@ -48,6 +50,12 @@ private:
     std::atomic<bool> _quote_loading = false;
     std::vector<kis_domain::balance_item1> _manual_stream_items;
     std::vector<kis_domain::balance_item1> _watch_stream_items;
+private:
+    bool ensureAccessToken(bool force_refresh = false);
+    bool refreshAccessTokenAfterExpiration(const kis_domain::information_token& rejected_token,
+        std::string* error = nullptr);
+    kis_domain::information_token accessTokenSnapshot() const;
+    bool requestAndStoreAccessTokenLocked();
 public:
     bool initialize(bool force_token_refresh = false);
     bool updateBalance();

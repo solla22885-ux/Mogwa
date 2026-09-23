@@ -51,19 +51,44 @@ namespace {
             : manager->getLastError();
         post_webview_script(parent, L"load_runtime_status", std::move(status));
 
-        if (!initialized || !manager->updateExchangeRate() || !manager->updateBalance()) {
-            boost::json::object error;
-            error["comment"] = manager->getLastError().empty()
+        if (!initialized || !manager->updateBalance()) {
+            const std::string error_message = manager->getLastError().empty()
                 ? "한국투자증권 데이터를 불러오지 못했습니다."
                 : manager->getLastError();
+
+            boost::json::object error;
+            error["comment"] = error_message;
             post_webview_script(parent, L"load_advice", std::move(error));
+
+            // Do not leave the status spinner at "실시간 연결 대기" when the
+            // prerequisite REST requests failed before the WebSocket could start.
+            boost::json::object stream_state;
+            stream_state["state"] = static_cast<int>(stream_status::failed);
+            stream_state["message"] = error_message;
+            post_webview_script(parent, L"load_stream_status", std::move(stream_state));
             return;
         }
+
+        // Exchange-rate lookup is useful for KRW conversion, but it must not block
+        // positions or realtime prices. Keep the last known rate (if any) and let
+        // the rest of the dashboard start even when this auxiliary request fails.
+        const bool exchange_loaded = manager->updateExchangeRate();
+        const std::string exchange_error = exchange_loaded ? std::string{} : manager->getLastError();
 
         boost::json::object exchange;
         exchange["rate"] = manager->getExchangeRate();
         post_webview_script(parent, L"load_exchange_rate", std::move(exchange));
         post_webview_script(parent, L"load_balance", kis_json::to_json(manager->getBalance()));
+
+        // Start realtime streaming immediately after the balance/subscription list is ready.
+        // Previously requestChatGPTAdvice() ran first, so a slow AI request left the UI at
+        // "실시간 연결 대기" even though the WebSocket had not been started yet.
+        if (manager->hasKisCredentials() && !manager->runMarketStream()) {
+            boost::json::object stream_state;
+            stream_state["state"] = static_cast<int>(stream_status::failed);
+            stream_state["message"] = "구독할 종목이 없거나 실시간 연결을 시작하지 못했습니다.";
+            post_webview_script(parent, L"load_stream_status", std::move(stream_state));
+        }
 
         std::string comment;
         if (!manager->hasKisCredentials()) {
@@ -72,11 +97,13 @@ namespace {
         else if (!manager->requestChatGPTAdvice(comment) && comment.empty()) {
             comment = "AI 분석을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.";
         }
+        if (!exchange_error.empty()) {
+            const std::string warning = "환율을 갱신하지 못했습니다: " + exchange_error;
+            comment = comment.empty() ? warning : warning + "\n\n" + comment;
+        }
         boost::json::object advice;
         advice["comment"] = comment;
         post_webview_script(parent, L"load_advice", std::move(advice));
-
-        if (manager->hasKisCredentials()) manager->runMarketStream();
     }
 }
 
@@ -95,7 +122,40 @@ CMogwaView::webview_control::~webview_control()
 
 void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& message)
 {
-    if (message == L"retry_kis_stream") {
+    if (message.starts_with(webview_message::show_native_message)) {
+        try {
+            const std::string payload = m1::string::wstring_to_string(
+                message.substr(webview_message::show_native_message.size()));
+            const boost::json::object input = boost::json::parse(payload).as_object();
+
+            const auto read_string = [&input](const char* key, const char* fallback) -> std::string {
+                const auto* value = input.if_contains(key);
+                return value && value->is_string() ? std::string(value->as_string()) : std::string(fallback);
+            };
+
+            const std::wstring title = m1::string::string_to_wstring(
+                read_string("title", "Mogwa"));
+            const std::wstring body = m1::string::string_to_wstring(
+                read_string("message", "요청을 처리하는 중 오류가 발생했습니다."));
+            const std::string icon = read_string("icon", "warning");
+
+            UINT flags = MB_OK | MB_TASKMODAL;
+            if (icon == "error") flags |= MB_ICONERROR;
+            else if (icon == "info") flags |= MB_ICONINFORMATION;
+            else flags |= MB_ICONWARNING;
+
+            ::MessageBoxW(_parent->GetSafeHwnd(), body.c_str(), title.c_str(), flags);
+        }
+        catch (const std::exception& error) {
+            TRACE(L"[WebView] native message parse failed: %hs\n", error.what());
+            ::MessageBoxW(_parent->GetSafeHwnd(),
+                L"요청을 처리하는 중 오류가 발생했습니다.",
+                L"Mogwa", MB_OK | MB_ICONERROR | MB_TASKMODAL);
+        }
+        return;
+    }
+
+    else if (message == webview_message::retry_kis_stream) {
         const auto manager = _manager;
         const auto operation_mutex = _operation_mutex;
         const HWND parent = _parent->GetSafeHwnd();
@@ -113,7 +173,7 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
         return;
     }
 
-    if (message == L"clear_kis_credentials") {
+    else if (message == webview_message::clear_kis_credentials) {
         const auto manager = _manager;
         const auto operation_mutex = _operation_mutex;
         const HWND parent = _parent->GetSafeHwnd();
@@ -131,7 +191,7 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
         return;
     }
 
-    if (message == L"clear_openai_api_key") {
+    else if (message == webview_message::clear_openai_api_key) {
         const bool cleared = _manager && _manager->clearOpenAiApiKey();
         boost::json::object result;
         result["success"] = cleared;
@@ -143,11 +203,11 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
         return;
     }
 
-    constexpr std::wstring_view save_openai_api_key = L"save_openai_api_key\n";
-    if (message.starts_with(save_openai_api_key)) {
+    else if (message.starts_with(webview_message::save_openai_api_key)) {
         boost::json::object result;
         try {
-            const std::string payload = m1::string::wstring_to_string(message.substr(save_openai_api_key.size()));
+            const std::string payload = m1::string::wstring_to_string(
+                message.substr(webview_message::save_openai_api_key.size()));
             const boost::json::object input = boost::json::parse(payload).as_object();
             const auto* value = input.if_contains("api_key");
             const std::string api_key = value && value->is_string()
@@ -171,10 +231,10 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
         return;
     }
 
-    constexpr std::wstring_view sync_manual_holdings = L"sync_manual_holdings\n";
-    if (message.starts_with(sync_manual_holdings)) {
+    else if (message.starts_with(webview_message::sync_manual_holdings)) {
         try {
-            const std::string payload = m1::string::wstring_to_string(message.substr(sync_manual_holdings.size()));
+            const std::string payload = m1::string::wstring_to_string(
+                message.substr(webview_message::sync_manual_holdings.size()));
             auto items = parse_subscriptions(boost::json::parse(payload));
             const auto manager = _manager;
             const auto operation_mutex = _operation_mutex;
@@ -189,10 +249,10 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
         return;
     }
 
-    constexpr std::wstring_view sync_realtime_watchlist = L"sync_realtime_watchlist\n";
-    if (message.starts_with(sync_realtime_watchlist)) {
+    else if (message.starts_with(webview_message::sync_realtime_watchlist)) {
         try {
-            const std::string payload = m1::string::wstring_to_string(message.substr(sync_realtime_watchlist.size()));
+            const std::string payload = m1::string::wstring_to_string(
+                message.substr(webview_message::sync_realtime_watchlist.size()));
             auto items = parse_subscriptions(boost::json::parse(payload));
             const auto manager = _manager;
             const auto operation_mutex = _operation_mutex;
@@ -208,11 +268,11 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
     }
 
 
-    constexpr std::wstring_view load_portfolio_history = L"load_portfolio_history\n";
-    if (message.starts_with(load_portfolio_history)) {
+    else if (message.starts_with(webview_message::load_portfolio_history)) {
         boost::json::object response;
         try {
-            const std::string payload = m1::string::wstring_to_string(message.substr(load_portfolio_history.size()));
+            const std::string payload = m1::string::wstring_to_string(
+                message.substr(webview_message::load_portfolio_history.size()));
             const boost::json::value parsed = boost::json::parse(payload);
             std::vector<TradeManager::portfolio_holding> holdings;
             if (parsed.is_array()) {
@@ -267,11 +327,11 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
         return;
     }
 
-    constexpr std::wstring_view load_performance_history = L"load_performance_history\n";
-    if (message.starts_with(load_performance_history)) {
+    else if (message.starts_with(webview_message::load_performance_history)) {
         boost::json::object response;
         try {
-            const std::string payload = m1::string::wstring_to_string(message.substr(load_performance_history.size()));
+            const std::string payload = m1::string::wstring_to_string(
+                message.substr(webview_message::load_performance_history.size()));
             const boost::json::object input = boost::json::parse(payload).as_object();
             const auto read_string = [&input](const char* key) -> std::string {
                 const auto* value = input.if_contains(key);
@@ -330,11 +390,11 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
         return;
     }
 
-    constexpr std::wstring_view request_realtime_quote = L"request_realtime_quote\n";
-    if (message.starts_with(request_realtime_quote)) {
+    else if (message.starts_with(webview_message::request_realtime_quote)) {
         boost::json::object response;
         try {
-            const std::string payload = m1::string::wstring_to_string(message.substr(request_realtime_quote.size()));
+            const std::string payload = m1::string::wstring_to_string(
+                message.substr(webview_message::request_realtime_quote.size()));
             const boost::json::object input = boost::json::parse(payload).as_object();
             const auto* ticker = input.if_contains("ticker");
             const auto* exchange = input.if_contains("exchange");
@@ -360,10 +420,10 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
         return;
     }
 
-    constexpr std::wstring_view save_credentials = L"save_kis_credentials\n";
-    if (message.starts_with(save_credentials)) {
+    else if (message.starts_with(webview_message::save_kis_credentials)) {
         try {
-            const std::string payload = m1::string::wstring_to_string(message.substr(save_credentials.size()));
+            const std::string payload = m1::string::wstring_to_string(
+                message.substr(webview_message::save_kis_credentials.size()));
             const boost::json::object input = boost::json::parse(payload).as_object();
             const auto read_string = [&input](const char* key) -> std::string {
                 const auto* value = input.if_contains(key);
@@ -399,7 +459,7 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
         return;
     }
 
-    if (message.starts_with(scheme::document_load)) {
+    else if (message.starts_with(scheme::document_load)) {
         if (!_manager) return;
         subscriptions manual_items;
         subscriptions watch_items;

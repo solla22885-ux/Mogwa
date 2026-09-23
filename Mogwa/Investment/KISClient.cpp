@@ -36,9 +36,12 @@ namespace {
 
     struct daily_cache_entry {
         std::vector<kis_domain::daily_bar> values;
-        std::string covered_start;
-        std::string covered_end;
-        steady_clock::time_point stored_at;
+        struct coverage {
+            std::string start;
+            std::string end;
+            steady_clock::time_point stored_at;
+        };
+        std::vector<coverage> coverages;
     };
 
     std::mutex market_cache_mutex;
@@ -112,6 +115,22 @@ namespace {
             }
         }
         return fallback;
+    }
+
+    std::string response_error_code(const std::string& response)
+    {
+        boost::system::error_code error;
+        const boost::json::value value = boost::json::parse(response, error);
+        if (error || !value.is_object()) return {};
+
+        const auto& object = value.as_object();
+        for (const char* key : { "msg_cd", "error_code", "code" }) {
+            const auto* field = object.if_contains(key);
+            if (field && field->is_string() && !field->as_string().empty()) {
+                return std::string(field->as_string());
+            }
+        }
+        return {};
     }
 
     bool api_response_succeeded(const boost::json::object& object)
@@ -228,6 +247,7 @@ bool KISClient::request_token(const std::string& appkey, const std::string& apps
 {
     output = {};
     _last_error.clear();
+    _last_error_code.clear();
     std::string body = "{"
         "\"grant_type\":\"client_credentials\","
         "\"appkey\":\"" + appkey + "\","
@@ -238,6 +258,7 @@ bool KISClient::request_token(const std::string& appkey, const std::string& apps
     std::string response;
 
     if (curl == nullptr) {
+        _last_error = "HTTP 요청을 초기화하지 못했습니다.";
         return false;
     }
 
@@ -259,6 +280,7 @@ bool KISClient::request_token(const std::string& appkey, const std::string& apps
 
     long status_code = 0;
     if (!perform_request(curl, &status_code)) {
+        _last_error_code = response_error_code(response);
         _last_error = response_error_message(response,
             status_code > 0 ? std::format("한국투자증권 인증 요청이 HTTP {}로 실패했습니다.", status_code)
                             : "한국투자증권 인증 서버에 연결하지 못했습니다.");
@@ -281,6 +303,7 @@ bool KISClient::request_token(const std::string& appkey, const std::string& apps
         || !expired || !expired->is_string()
         || !token_type || !token_type->is_string()
         || !expires_in || (!expires_in->is_int64() && !expires_in->is_uint64())) {
+        _last_error_code = response_error_code(response);
         _last_error = response_error_message(response, "인증 응답에 접근 토큰이 없습니다.");
         return false;
     }
@@ -291,6 +314,7 @@ bool KISClient::request_token(const std::string& appkey, const std::string& apps
     output.expires_in = expires_in->is_int64()
         ? expires_in->as_int64()
         : static_cast<int64_t>(expires_in->as_uint64());
+    output.app_key_tag = kis_domain::make_app_key_tag(appkey);
     output.ready = true;
     return true;
 }
@@ -299,6 +323,7 @@ bool KISClient::request_ws_token(const std::string& appkey, const std::string& a
 {
     ws_key.clear();
     _last_error.clear();
+    _last_error_code.clear();
     std::string body = "{"
         "\"grant_type\":\"client_credentials\","
         "\"appkey\":\"" + appkey + "\","
@@ -309,6 +334,7 @@ bool KISClient::request_ws_token(const std::string& appkey, const std::string& a
     std::string response;
 
     if (curl == nullptr) {
+        _last_error = "HTTP 요청을 초기화하지 못했습니다.";
         return false;
     }
 
@@ -330,6 +356,7 @@ bool KISClient::request_ws_token(const std::string& appkey, const std::string& a
 
     long status_code = 0;
     if (!perform_request(curl, &status_code)) {
+        _last_error_code = response_error_code(response);
         _last_error = response_error_message(response,
             status_code > 0 ? std::format("WebSocket 승인키 요청이 HTTP {}로 실패했습니다.", status_code)
                             : "WebSocket 승인키 서버에 연결하지 못했습니다.");
@@ -346,6 +373,7 @@ bool KISClient::request_ws_token(const std::string& appkey, const std::string& a
     const auto& obj = parsed.as_object();
     const auto* approval_key = obj.if_contains("approval_key");
     if (!approval_key || !approval_key->is_string() || approval_key->as_string().empty()) {
+        _last_error_code = response_error_code(response);
         _last_error = response_error_message(response, "WebSocket 승인 응답에 approval_key가 없습니다.");
         return false;
     }
@@ -358,6 +386,9 @@ bool KISClient::request_balance(const std::string& appkey, const std::string& ap
     const std::string& account_number, const std::string& account_product_code,
     const kis_domain::information_token& info_token, kis_domain::information_balance& output)
 {
+    _last_error.clear();
+    _last_error_code.clear();
+    output = {};
     std::string query = "?CANO=" + account_number;
     query += "&ACNT_PRDT_CD=" + account_product_code;
     query += "&OVRS_EXCG_CD=NASD";
@@ -371,6 +402,7 @@ bool KISClient::request_balance(const std::string& appkey, const std::string& ap
     std::string response;
 
     if (curl == nullptr) {
+        _last_error = "잔고 조회 요청을 초기화하지 못했습니다.";
         return false;
     }
 
@@ -392,16 +424,21 @@ bool KISClient::request_balance(const std::string& appkey, const std::string& ap
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     configure_request(curl);
 
-    if (!perform_request(curl)) {
+    long status_code = 0;
+    if (!perform_request(curl, &status_code)) {
+        _last_error_code = response_error_code(response);
+        _last_error = response_error_message(response,
+            status_code > 0 ? std::format("잔고 조회가 HTTP {}로 실패했습니다.", status_code)
+                            : "잔고 조회 서버에 연결하지 못했습니다.");
         return false;
     }
 
-
-    output = {};
     try {
         boost::json::value token_json = boost::json::parse(response);
         boost::json::object obj = token_json.as_object();
         if (!api_response_succeeded(obj)) {
+            _last_error_code = response_error_code(response);
+            _last_error = response_error_message(response, "잔고 조회에 실패했습니다.");
             return false;
         }
 
@@ -451,6 +488,7 @@ bool KISClient::request_balance(const std::string& appkey, const std::string& ap
     }
     catch (const std::exception& error) {
         output = {};
+        _last_error = std::format("잔고 응답 처리에 실패했습니다: {}", error.what());
         TRACE(L"[KISClient] balance parse error: %hs\n", error.what());
         return false;
     }
@@ -460,6 +498,8 @@ bool KISClient::request_exchange_rate(const std::string& appkey, const std::stri
     const std::string& account_number, const std::string& account_product_code,
     const kis_domain::information_token& info_token, double& output_rate)
 {
+    _last_error.clear();
+    _last_error_code.clear();
     std::string query = "?CANO=" + account_number;
     query += "&ACNT_PRDT_CD=" + account_product_code;
     query += "&OVRS_EXCG_CD=NASD";
@@ -472,6 +512,7 @@ bool KISClient::request_exchange_rate(const std::string& appkey, const std::stri
     std::string response;
 
     if (curl == nullptr) {
+        _last_error = "환율 조회 요청을 초기화하지 못했습니다.";
         return false;
     }
 
@@ -493,7 +534,12 @@ bool KISClient::request_exchange_rate(const std::string& appkey, const std::stri
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
     configure_request(curl);
 
-    if (!perform_request(curl)) {
+    long status_code = 0;
+    if (!perform_request(curl, &status_code)) {
+        _last_error_code = response_error_code(response);
+        _last_error = response_error_message(response,
+            status_code > 0 ? std::format("환율 조회가 HTTP {}로 실패했습니다.", status_code)
+                            : "환율 조회 서버에 연결하지 못했습니다.");
         return false;
     }
 
@@ -510,6 +556,8 @@ bool KISClient::request_exchange_rate(const std::string& appkey, const std::stri
                     msg = msg_it->value().as_string().c_str();
                 }
 
+                _last_error_code = response_error_code(response);
+                _last_error = msg.empty() ? "환율 조회에 실패했습니다." : msg;
                 TRACE(L"[KISClient] request_exchange_rate api error: %hs\n", msg.c_str());
                 return false;
             }
@@ -536,10 +584,12 @@ bool KISClient::request_exchange_rate(const std::string& appkey, const std::stri
             }
         }
 
+        _last_error = "환율 조회 응답에 환율(exrt)이 없습니다.";
         TRACE(L"[KISClient] request_exchange_rate exrt not found. response: %hs\n", response.c_str());
         return false;
     }
     catch (const std::exception& e) {
+        _last_error = std::format("환율 응답 처리에 실패했습니다: {}", e.what());
         TRACE(L"[KISClient] request_exchange_rate parse exception: %hs\n", e.what());
         TRACE(L"[KISClient] response: %hs\n", response.c_str());
         return false;
@@ -554,6 +604,7 @@ bool KISClient::request_overseas_quote(const std::string& appkey, const std::str
 {
     output = {};
     _last_error.clear();
+    _last_error_code.clear();
     if (ticker.empty()) return false;
 
     const std::string excd = resolve_quote_exchange(exchange, ticker);
@@ -597,6 +648,7 @@ bool KISClient::request_overseas_quote(const std::string& appkey, const std::str
 
     long status_code = 0;
     if (!perform_request(curl, &status_code)) {
+        _last_error_code = response_error_code(response);
         _last_error = response_error_message(response,
             status_code > 0 ? std::format("{} 현재가 조회가 HTTP {}로 실패했습니다.", ticker, status_code)
                             : std::format("{} 현재가 조회 서버에 연결하지 못했습니다.", ticker));
@@ -611,6 +663,7 @@ bool KISClient::request_overseas_quote(const std::string& appkey, const std::str
     }
     const auto& root = parsed.as_object();
     if (!api_response_succeeded(root)) {
+        _last_error_code = response_error_code(response);
         _last_error = response_error_message(response, std::format("{} 현재가 조회에 실패했습니다.", ticker));
         return false;
     }
@@ -647,6 +700,7 @@ bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std
 {
     output.clear();
     _last_error.clear();
+    _last_error_code.clear();
     if (ticker.empty() || start_date.size() != 8 || end_date.size() != 8 || max_records == 0) return false;
 
     const std::string excd = resolve_quote_exchange(exchange, ticker);
@@ -658,9 +712,14 @@ bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std
             const auto ttl = end_date < current_date_key()
                 ? historical_daily_cache_ttl
                 : current_daily_cache_ttl;
-            if (steady_clock::now() - cached->second.stored_at <= ttl
-                && cached->second.covered_start <= start_date
-                && cached->second.covered_end >= end_date) {
+            const auto now = steady_clock::now();
+            const bool covered = std::any_of(cached->second.coverages.begin(),
+                cached->second.coverages.end(), [&](const daily_cache_entry::coverage& range) {
+                    return now - range.stored_at <= ttl
+                        && range.start <= start_date
+                        && range.end >= end_date;
+                });
+            if (covered) {
                 for (const auto& bar : cached->second.values) {
                     if (bar.date >= start_date && bar.date <= end_date) output.push_back(bar);
                 }
@@ -673,6 +732,7 @@ bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std
     }
     std::string current_bymd = end_date;
     std::unordered_set<std::string> seen;
+    bool reached_requested_start = false;
 
     for (size_t page = 0; page < 40 && output.size() < max_records; ++page) {
         std::string query = "?AUTH=";
@@ -710,6 +770,7 @@ bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std
 
         long status_code = 0;
         if (!perform_request(curl, &status_code)) {
+            _last_error_code = response_error_code(response);
             _last_error = response_error_message(response,
                 status_code > 0 ? std::format("{} 일봉 조회가 HTTP {}로 실패했습니다.", ticker, status_code)
                                 : std::format("{} 일봉 조회 서버에 연결하지 못했습니다.", ticker));
@@ -724,12 +785,16 @@ bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std
         }
         const auto& root = parsed.as_object();
         if (!api_response_succeeded(root)) {
+            _last_error_code = response_error_code(response);
             _last_error = response_error_message(response, std::format("{} 일봉 조회에 실패했습니다.", ticker));
             return false;
         }
 
         const auto* rows = root.if_contains("output2");
-        if (!rows || !rows->is_array() || rows->as_array().empty()) break;
+        if (!rows || !rows->is_array() || rows->as_array().empty()) {
+            reached_requested_start = true;
+            break;
+        }
 
         std::string oldest;
         size_t rows_seen = 0;
@@ -757,7 +822,8 @@ bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std
             if (output.size() >= max_records) break;
         }
 
-        if (rows_seen == 0 || oldest.empty() || oldest <= start_date || output.size() >= max_records) break;
+        if (oldest <= start_date) reached_requested_start = true;
+        if (rows_seen == 0 || oldest.empty() || reached_requested_start || output.size() >= max_records) break;
         const std::string next = offset_date_key(oldest, -1);
         if (next.empty() || next >= current_bymd) break;
         current_bymd = next;
@@ -780,14 +846,14 @@ bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std
         cached.values.reserve(merged.size());
         for (auto& [date, bar] : merged) cached.values.push_back(std::move(bar));
 
-        const std::string actual_start = output.size() < max_records ? start_date : output.front().date;
-        cached.covered_start = cached.covered_start.empty()
-            ? actual_start
-            : (std::min)(cached.covered_start, actual_start);
-        cached.covered_end = cached.covered_end.empty()
-            ? end_date
-            : (std::max)(cached.covered_end, end_date);
-        cached.stored_at = steady_clock::now();
+        const std::string actual_start = reached_requested_start ? start_date : output.front().date;
+        cached.coverages.push_back({ actual_start, end_date, steady_clock::now() });
+        // Month navigation can create many overlapping entries. Keep the cache bounded
+        // without merging disjoint ranges (which would incorrectly cache the gap).
+        if (cached.coverages.size() > 64) {
+            cached.coverages.erase(cached.coverages.begin(),
+                cached.coverages.begin() + static_cast<ptrdiff_t>(cached.coverages.size() - 64));
+        }
     }
     return true;
 }
@@ -798,6 +864,7 @@ bool KISClient::request_overseas_minute_bars(const std::string& appkey, const st
 {
     output.clear();
     _last_error.clear();
+    _last_error_code.clear();
     if (ticker.empty() || max_records == 0) return false;
 
     const std::string excd = resolve_quote_exchange(exchange, ticker);
@@ -859,6 +926,7 @@ bool KISClient::request_overseas_minute_bars(const std::string& appkey, const st
 
         long status_code = 0;
         if (!perform_request(curl, &status_code)) {
+            _last_error_code = response_error_code(response);
             _last_error = response_error_message(response,
                 status_code > 0 ? std::format("{} 분봉 조회가 HTTP {}로 실패했습니다.", ticker, status_code)
                                 : std::format("{} 분봉 조회 서버에 연결하지 못했습니다.", ticker));
@@ -874,6 +942,7 @@ bool KISClient::request_overseas_minute_bars(const std::string& appkey, const st
 
         const auto& root = parsed.as_object();
         if (!api_response_succeeded(root)) {
+            _last_error_code = response_error_code(response);
             _last_error = response_error_message(response, std::format("{} 분봉 조회에 실패했습니다.", ticker));
             return false;
         }
@@ -936,11 +1005,13 @@ bool KISClient::request_overseas_minute_bars(const std::string& appkey, const st
     {
         std::scoped_lock cache_lock(market_cache_mutex);
         auto& cached = minute_cache[cache_key];
-        if (max_records >= cached.max_records || cached.values.empty()) {
+        const bool expired = cached.stored_at == steady_clock::time_point{}
+            || steady_clock::now() - cached.stored_at > minute_cache_ttl;
+        if (expired || max_records >= cached.max_records || cached.values.empty()) {
             cached.values = output;
             cached.max_records = max_records;
+            cached.stored_at = steady_clock::now();
         }
-        cached.stored_at = steady_clock::now();
     }
     return true;
 }
