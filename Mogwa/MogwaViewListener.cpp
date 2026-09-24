@@ -433,6 +433,64 @@ void CMogwaView::webview_control::OnWebviewMessageReceive(const std::wstring& me
         return;
     }
 
+    else if (message.starts_with(webview_message::place_overseas_order)) {
+        try {
+            const std::string payload = m1::string::wstring_to_string(
+                message.substr(webview_message::place_overseas_order.size()));
+            const boost::json::object input = boost::json::parse(payload).as_object();
+            const auto read_string = [&input](const char* key) -> std::string {
+                const auto* value = input.if_contains(key);
+                return value && value->is_string() ? std::string(value->as_string()) : std::string{};
+            };
+            const auto read_number = [&input](const char* key) -> double {
+                const auto* value = input.if_contains(key);
+                if (!value) return 0;
+                if (value->is_double()) return value->as_double();
+                if (value->is_int64()) return static_cast<double>(value->as_int64());
+                if (value->is_uint64()) return static_cast<double>(value->as_uint64());
+                return 0;
+            };
+
+            const std::string side = read_string("side");
+            const std::string ticker = read_string("ticker");
+            const std::string exchange = read_string("exchange");
+            const uint64_t quantity = static_cast<uint64_t>(read_number("quantity"));
+            const double limit_price = read_number("limit_price");
+            const auto manager = _manager;
+            const auto operation_mutex = _operation_mutex;
+            const HWND parent = _parent->GetSafeHwnd();
+            std::thread([manager, operation_mutex, parent, side, ticker, exchange, quantity, limit_price]() {
+                std::lock_guard lock(*operation_mutex);
+                kis_domain::overseas_order_result order;
+                const bool success = manager && manager->placeOverseasOrder(
+                    side, ticker, exchange, quantity, limit_price, order);
+                boost::json::object result;
+                result["success"] = success;
+                result["side"] = side;
+                result["ticker"] = ticker;
+                result["exchange"] = exchange;
+                result["quantity"] = quantity;
+                result["limit_price"] = limit_price;
+                result["order_number"] = order.order_number;
+                result["order_time"] = order.order_time;
+                result["message"] = success ? order.message
+                    : (manager ? manager->getLastError() : "주문 관리자를 사용할 수 없습니다.");
+                post_webview_script(parent, L"load_order_result", std::move(result));
+                if (success && manager) {
+                    post_webview_script(parent, L"load_balance", kis_json::to_json(manager->getBalance()));
+                }
+            }).detach();
+        }
+        catch (const std::exception& error) {
+            boost::json::object result;
+            result["success"] = false;
+            result["message"] = "주문 요청 형식을 확인해 주세요.";
+            TRACE(L"[TradeManager] order request parse failed: %hs\n", error.what());
+            _parent->_view->fn_javascript(L"load_order_result", result);
+        }
+        return;
+    }
+
     else if (message.starts_with(webview_message::save_kis_credentials)) {
         try {
             const std::string payload = m1::string::wstring_to_string(

@@ -945,6 +945,52 @@ bool TradeManager::requestRealtimeQuote(const std::string& ticker, const std::st
     return true;
 }
 
+bool TradeManager::placeOverseasOrder(const std::string& side, const std::string& ticker,
+    const std::string& exchange, uint64_t quantity, double limit_price,
+    kis_domain::overseas_order_result& output)
+{
+    output = {};
+    _last_error.clear();
+    if (!_credentials_available) {
+        _last_error = "한국투자증권 인증정보를 먼저 설정해 주세요.";
+        return false;
+    }
+    if ((side != "buy" && side != "sell") || ticker.empty() || quantity == 0 || limit_price <= 0) {
+        _last_error = "매수·매도 구분, 종목, 수량과 지정가를 확인해 주세요.";
+        return false;
+    }
+    if (!ensureAccessToken()) return false;
+
+    KISClient client;
+    auto token = accessTokenSnapshot();
+    const auto submit = [&]() {
+        return client.request_overseas_order(_settings.kis_app_key, _settings.kis_app_secret,
+            _settings.kis_account_number, _settings.kis_account_product_code, token,
+            side, exchange, ticker, quantity, limit_price, output);
+    };
+    if (!submit()) {
+        if (!client.isLastErrorTokenExpired()) {
+            _last_error = client.getLastError();
+            return false;
+        }
+        std::string refresh_error;
+        if (!refreshAccessTokenAfterExpiration(token, &refresh_error)) {
+            _last_error = refresh_error;
+            return false;
+        }
+        token = accessTokenSnapshot();
+        if (!submit()) {
+            _last_error = client.getLastError();
+            return false;
+        }
+    }
+
+    // Refresh the account snapshot after a successful acceptance so the order
+    // page and dashboard converge as soon as KIS reflects the transaction.
+    updateBalance();
+    return true;
+}
+
 bool TradeManager::clearKisCredentials()
 {
     stopMarketStream();

@@ -1302,6 +1302,255 @@
         }
       }
 
+      .trade-workspace {
+        display: grid;
+        grid-template-columns: minmax(250px, 0.78fr) minmax(330px, 1fr) minmax(
+            280px,
+            0.9fr
+          );
+        gap: 13px;
+        align-items: start;
+      }
+      .trade-card {
+        padding: 18px;
+      }
+      .trade-search {
+        display: grid;
+        grid-template-columns: 104px 1fr auto;
+        gap: 8px;
+        margin-bottom: 15px;
+      }
+      .trade-input,
+      .trade-select {
+        width: 100%;
+        height: 38px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #0d1118;
+        color: var(--text);
+        padding: 0 11px;
+        font: inherit;
+      }
+      .trade-input::placeholder {
+        color: #606a7b;
+      }
+      .trade-quote-head {
+        padding: 5px 0 17px;
+        border-bottom: 1px solid var(--line);
+      }
+      .trade-symbol {
+        font-size: 18px;
+        font-weight: 780;
+      }
+      .trade-symbol small {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 600;
+        margin-left: 7px;
+      }
+      .trade-price {
+        font-size: 30px;
+        font-weight: 780;
+        letter-spacing: -0.04em;
+        margin-top: 13px;
+      }
+      .trade-change {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      .trade-change.positive {
+        color: var(--green);
+      }
+      .trade-change.negative {
+        color: var(--red);
+      }
+      .trade-stats {
+        display: grid;
+        gap: 0;
+        margin-top: 8px;
+      }
+      .trade-stat {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 11px 0;
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+      }
+      .trade-stat span {
+        color: var(--muted);
+      }
+      .trade-stat strong {
+        font-weight: 680;
+      }
+      .order-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 7px;
+        margin: 15px 0;
+      }
+      .order-tab {
+        height: 39px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #0d1118;
+        color: var(--muted);
+        font-weight: 750;
+        cursor: pointer;
+      }
+      .order-tab[data-side="buy"].active {
+        color: #75e5bd;
+        border-color: rgba(66, 215, 163, 0.52);
+        background: rgba(66, 215, 163, 0.1);
+      }
+      .order-tab[data-side="sell"].active {
+        color: #ff8a95;
+        border-color: rgba(255, 105, 120, 0.52);
+        background: rgba(255, 105, 120, 0.1);
+      }
+      .order-field {
+        margin-top: 13px;
+      }
+      .order-field label {
+        display: flex;
+        justify-content: space-between;
+        color: var(--muted);
+        font-size: 11px;
+        margin-bottom: 7px;
+      }
+      .order-field label strong {
+        color: #cbd4e2;
+        font-weight: 650;
+      }
+      .quantity-row {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 7px;
+      }
+      .quantity-chip {
+        width: 50px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #151b25;
+        color: #bac4d2;
+        cursor: pointer;
+      }
+      .order-summary {
+        margin-top: 17px;
+        padding: 13px;
+        border-radius: 10px;
+        background: #0d1118;
+        border: 1px solid var(--line);
+      }
+      .order-summary > div {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+      }
+      .order-summary > div + div {
+        margin-top: 9px;
+      }
+      .order-summary span {
+        color: var(--muted);
+      }
+      .order-submit {
+        width: 100%;
+        height: 45px;
+        margin-top: 13px;
+        border: 0;
+        border-radius: 10px;
+        color: #08120e;
+        background: var(--green);
+        font-weight: 800;
+        cursor: pointer;
+      }
+      .order-submit.sell {
+        color: #1b0709;
+        background: var(--red);
+      }
+      .order-submit:disabled {
+        opacity: 0.48;
+        cursor: default;
+      }
+      .order-message {
+        min-height: 34px;
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      .order-message.success {
+        color: var(--green);
+      }
+      .order-message.error {
+        color: var(--red);
+      }
+      .trade-holdings {
+        max-height: 388px;
+        overflow: auto;
+        margin-top: 11px;
+      }
+      .trade-holding {
+        width: 100%;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 5px 12px;
+        padding: 12px 4px;
+        border: 0;
+        border-bottom: 1px solid var(--line);
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+      }
+      .trade-holding strong {
+        font-size: 12px;
+      }
+      .trade-holding span {
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .trade-holding .holding-value {
+        color: #dfe6f1;
+        text-align: right;
+      }
+      .session-orders {
+        grid-column: 1 / -1;
+      }
+      .session-order-list {
+        margin-top: 12px;
+      }
+      .session-order-row {
+        display: grid;
+        grid-template-columns: 74px 1fr 90px 90px 1.5fr;
+        gap: 12px;
+        align-items: center;
+        padding: 11px 2px;
+        border-top: 1px solid var(--line);
+        font-size: 11px;
+      }
+      .side-pill {
+        width: 37px;
+        padding: 4px 0;
+        border-radius: 6px;
+        text-align: center;
+        font-weight: 800;
+      }
+      .side-pill.buy {
+        color: var(--green);
+        background: rgba(66, 215, 163, 0.1);
+      }
+      .side-pill.sell {
+        color: var(--red);
+        background: rgba(255, 105, 120, 0.1);
+      }
+      .trade-empty {
+        color: var(--muted);
+        font-size: 11px;
+        padding: 22px 2px;
+        text-align: center;
+      }
+
       @media (hover: hover) {
         .nav-button:hover:not(.active) {
           color: #b8c4d6;
@@ -1365,6 +1614,12 @@
         .analysis-grid {
           grid-template-columns: 1fr;
         }
+        .trade-workspace {
+          grid-template-columns: 1fr 1fr;
+        }
+        .trade-workspace > .trade-card:nth-child(3) {
+          grid-column: 1 / -1;
+        }
         .analysis-kpis,
         .utility-grid {
           grid-template-columns: repeat(2, 1fr);
@@ -1402,6 +1657,23 @@
         .realtime-search {
           align-items: flex-start;
           flex-direction: column;
+        }
+        .trade-workspace {
+          grid-template-columns: 1fr;
+        }
+        .trade-workspace > .trade-card:nth-child(3),
+        .session-orders {
+          grid-column: 1;
+        }
+        .trade-search {
+          grid-template-columns: 1fr;
+        }
+        .session-order-row {
+          grid-template-columns: 56px 1fr 70px;
+        }
+        .session-order-row span:nth-child(4),
+        .session-order-row span:nth-child(5) {
+          display: none;
         }
         .search {
           width: 100%;
@@ -1475,6 +1747,22 @@
           >
             <path d="M3 17l5-5 4 3 7-8" />
             <path d="M15 7h4v4" />
+          </svg>
+        </button>
+        <button
+          class="nav-button"
+          data-page="trade"
+          title="주식 주문"
+          aria-label="주식 주문"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          >
+            <path d="M5 7h14M5 12h9M5 17h6" />
+            <path d="M17 11v8m-3-3 3 3 3-3" />
           </svg>
         </button>
         <div class="nav-spacer"></div>
@@ -2047,6 +2335,176 @@
           </article>
         </section>
 
+        <section class="page-view" data-page="trade" hidden>
+          <div class="trade-workspace">
+            <article class="card trade-card">
+              <div class="card-title">종목 시세</div>
+              <div class="card-description">
+                미국 주식 티커를 검색해 주문 가격을 확인합니다.
+              </div>
+              <form class="trade-search" id="tradeSearchForm">
+                <select
+                  class="trade-select"
+                  id="tradeExchange"
+                  aria-label="거래소"
+                >
+                  <option value="NASD">NASDAQ</option>
+                  <option value="NYSE">NYSE</option>
+                  <option value="AMEX">AMEX</option>
+                </select>
+                <input
+                  class="trade-input"
+                  id="tradeTicker"
+                  type="search"
+                  placeholder="예: AAPL"
+                  autocomplete="off"
+                />
+                <button
+                  class="credential-button primary"
+                  id="tradeSearchButton"
+                  type="submit"
+                >
+                  조회
+                </button>
+              </form>
+              <div class="trade-quote-head">
+                <div class="trade-symbol" id="tradeSymbol">
+                  종목을 선택하세요
+                </div>
+                <div class="trade-price" id="tradePrice">—</div>
+                <div class="trade-change" id="tradeChange">
+                  실시간 시세 대기
+                </div>
+              </div>
+              <div class="trade-stats">
+                <div class="trade-stat">
+                  <span>전일 종가</span
+                  ><strong id="tradePreviousClose">—</strong>
+                </div>
+                <div class="trade-stat">
+                  <span>고가 / 저가</span><strong id="tradeHighLow">—</strong>
+                </div>
+                <div class="trade-stat">
+                  <span>누적 거래량</span><strong id="tradeVolume">—</strong>
+                </div>
+                <div class="trade-stat">
+                  <span>주문 가능</span
+                  ><strong id="tradeOrderable">조회 필요</strong>
+                </div>
+              </div>
+            </article>
+
+            <article class="card trade-card">
+              <div class="card-title">주문 입력</div>
+              <div class="card-description">
+                미국 주식 지정가 주문 · KIS 실전 계좌
+              </div>
+              <div
+                class="order-tabs"
+                role="tablist"
+                aria-label="매수 매도 선택"
+              >
+                <button class="order-tab active" data-side="buy" type="button">
+                  매수
+                </button>
+                <button class="order-tab" data-side="sell" type="button">
+                  매도
+                </button>
+              </div>
+              <form id="tradeOrderForm">
+                <div class="order-field">
+                  <label for="tradeOrderPrice"
+                    ><span>지정가 (USD)</span
+                    ><strong id="tradePriceHint">현재가 —</strong></label
+                  >
+                  <input
+                    class="trade-input"
+                    id="tradeOrderPrice"
+                    type="number"
+                    min="0.0001"
+                    step="0.0001"
+                    inputmode="decimal"
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+                <div class="order-field">
+                  <label for="tradeOrderQuantity"
+                    ><span>수량</span
+                    ><strong id="tradeOwnedQuantity">보유 0주</strong></label
+                  >
+                  <div class="quantity-row">
+                    <input
+                      class="trade-input"
+                      id="tradeOrderQuantity"
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputmode="numeric"
+                      value="1"
+                      required
+                    />
+                    <button
+                      class="quantity-chip"
+                      data-qty-add="1"
+                      type="button"
+                    >
+                      +1
+                    </button>
+                    <button
+                      class="quantity-chip"
+                      data-qty-add="10"
+                      type="button"
+                    >
+                      +10
+                    </button>
+                  </div>
+                </div>
+                <div class="order-summary">
+                  <div><span>주문 유형</span><strong>지정가</strong></div>
+                  <div>
+                    <span>예상 주문금액</span
+                    ><strong id="tradeEstimatedAmount">$0.00</strong>
+                  </div>
+                  <div>
+                    <span>수수료·환전</span><strong>체결 후 반영</strong>
+                  </div>
+                </div>
+                <button
+                  class="order-submit"
+                  id="tradeSubmit"
+                  type="submit"
+                  disabled
+                >
+                  매수 주문 확인
+                </button>
+                <div class="order-message" id="tradeOrderMessage">
+                  종목을 조회한 뒤 주문할 수 있습니다.
+                </div>
+              </form>
+            </article>
+
+            <article class="card trade-card">
+              <div class="card-title">주문 가능 보유종목</div>
+              <div class="card-description" id="tradeHoldingSummary">
+                KIS 실보유 종목 0개
+              </div>
+              <div class="trade-holdings" id="tradeHoldings"></div>
+            </article>
+
+            <article class="card trade-card session-orders">
+              <div class="card-title">이번 실행의 주문 내역</div>
+              <div class="card-description">
+                현재 앱 실행 중 접수한 주문만 표시됩니다. 최종 체결 여부는
+                KIS에서 확인하세요.
+              </div>
+              <div class="session-order-list" id="sessionOrderList">
+                <div class="trade-empty">아직 접수한 주문이 없습니다.</div>
+              </div>
+            </article>
+          </div>
+        </section>
+
         <section class="page-view" data-page="settings" hidden>
           <div class="settings-grid">
             <article class="card settings-card settings-form-card">
@@ -2433,6 +2891,15 @@
         quoteCandles: [],
         quoteLoading: false,
         quoteSelection: null,
+        trade: {
+          side: "buy",
+          quote: null,
+          loading: false,
+          submitting: false,
+          requestTicker: "",
+          requestExchange: "NASD",
+          orders: [],
+        },
         sort: "value",
         query: "",
         hits: { allocation: [] },
@@ -3447,6 +3914,7 @@
           holdings: "보유 종목",
           analysis: "성과 분석",
           realtime: "실시간 종목 시세",
+          trade: "주식 주문",
           settings: "API 설정",
         };
         const initialPage = location.hash.slice(1);
@@ -3476,6 +3944,7 @@
                 renderRealtime();
                 syncRealtimeWatchlist();
               }
+              if (page === "trade") renderTrade();
               requestAnimationFrame(() => renderAll(false));
             });
           });
@@ -3496,6 +3965,7 @@
           renderRealtime();
           syncRealtimeWatchlist();
         }
+        if (state.page === "trade") renderTrade();
       }
 
       function renderAll(recordTrend = false) {
@@ -3506,6 +3976,7 @@
         renderTable();
         if (state.page === "analysis") renderPerformance();
         if (state.page === "realtime") renderRealtime();
+        if (state.page === "trade") renderTrade();
       }
 
       let liveRenderFrame = 0;
@@ -3524,6 +3995,7 @@
             renderTable();
           } else if (state.page === "analysis") renderPerformance();
           else if (state.page === "realtime") renderRealtime();
+          else if (state.page === "trade") renderTrade();
         });
       }
 
@@ -4547,6 +5019,217 @@
         return (match?.ticker || input).toUpperCase();
       }
 
+      function ownedTradeStock() {
+        const quote = state.trade.quote;
+        if (!quote) return null;
+        return state.realStocks.find(
+          (stock) =>
+            stock.ticker === quote.ticker && stock.exchange === quote.exchange,
+        );
+      }
+
+      function tradeEstimate() {
+        const price = Number($("#tradeOrderPrice")?.value),
+          quantity = Number($("#tradeOrderQuantity")?.value);
+        return Number.isFinite(price) &&
+          Number.isInteger(quantity) &&
+          quantity > 0
+          ? price * quantity
+          : 0;
+      }
+
+      function renderTradeHoldings() {
+        const container = $("#tradeHoldings");
+        if (!container) return;
+        $("#tradeHoldingSummary").textContent =
+          `KIS 실보유 종목 ${state.realStocks.length}개`;
+        container.replaceChildren();
+        if (!state.realStocks.length) {
+          const empty = document.createElement("div");
+          empty.className = "trade-empty";
+          empty.textContent = "보유 종목이 없습니다.";
+          container.append(empty);
+          return;
+        }
+        state.realStocks.forEach((stock) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "trade-holding";
+          button.dataset.tradeTicker = stock.ticker;
+          button.dataset.tradeExchange = stock.exchange;
+          const name = document.createElement("strong");
+          name.textContent = `${stock.name} · ${stock.ticker}`;
+          const value = document.createElement("strong");
+          value.className = "holding-value";
+          value.textContent = usd.format(Number(stock.nowPrice) || 0);
+          const exchange = document.createElement("span");
+          exchange.textContent = stock.exchange;
+          const quantity = document.createElement("span");
+          quantity.className = "holding-value";
+          quantity.textContent = `보유 ${number.format(stock.quantity)}주 · 주문가능 ${number.format(stock.orderable)}주`;
+          button.append(name, value, exchange, quantity);
+          container.append(button);
+        });
+      }
+
+      function renderSessionOrders() {
+        const container = $("#sessionOrderList");
+        if (!container) return;
+        container.replaceChildren();
+        if (!state.trade.orders.length) {
+          const empty = document.createElement("div");
+          empty.className = "trade-empty";
+          empty.textContent = "아직 접수한 주문이 없습니다.";
+          container.append(empty);
+          return;
+        }
+        state.trade.orders.forEach((order) => {
+          const row = document.createElement("div");
+          row.className = "session-order-row";
+          const side = document.createElement("span");
+          side.className = `side-pill ${order.side}`;
+          side.textContent = order.side === "buy" ? "매수" : "매도";
+          const symbol = document.createElement("strong");
+          symbol.textContent = `${order.ticker} · ${order.exchange}`;
+          const quantity = document.createElement("span");
+          quantity.textContent = `${number.format(order.quantity)}주`;
+          const price = document.createElement("span");
+          price.textContent = usd.format(order.limit_price);
+          const status = document.createElement("span");
+          status.textContent = order.success
+            ? `접수 · ${order.order_number || order.message}`
+            : `실패 · ${order.message}`;
+          status.className = order.success ? "positive" : "negative";
+          row.append(side, symbol, quantity, price, status);
+          container.append(row);
+        });
+      }
+
+      function updateTradeEstimate() {
+        const estimate = tradeEstimate();
+        $("#tradeEstimatedAmount").textContent = usd.format(estimate);
+      }
+
+      function renderTrade() {
+        if (!$("#tradeSymbol")) return;
+        const quote = state.trade.quote,
+          side = state.trade.side,
+          holding = ownedTradeStock();
+        document
+          .querySelectorAll(".order-tab")
+          .forEach((button) =>
+            button.classList.toggle("active", button.dataset.side === side),
+          );
+        const submit = $("#tradeSubmit");
+        submit.textContent = `${side === "buy" ? "매수" : "매도"} 주문 확인`;
+        submit.classList.toggle("sell", side === "sell");
+        submit.disabled =
+          !quote ||
+          state.credentialsMissing ||
+          state.trade.loading ||
+          state.trade.submitting;
+        $("#tradeOwnedQuantity").textContent =
+          `보유 ${number.format(holding?.orderable || 0)}주`;
+
+        if (!quote) {
+          $("#tradeSymbol").textContent = state.trade.loading
+            ? "시세 조회 중…"
+            : "종목을 선택하세요";
+          $("#tradePrice").textContent = "—";
+          $("#tradeChange").textContent = "실시간 시세 대기";
+          $("#tradePreviousClose").textContent = "—";
+          $("#tradeHighLow").textContent = "—";
+          $("#tradeVolume").textContent = "—";
+          $("#tradeOrderable").textContent = "조회 필요";
+          $("#tradePriceHint").textContent = "현재가 —";
+        } else {
+          const price = Number(quote.price),
+            rate = Number(quote.change_rate),
+            difference = Number(quote.change);
+          $("#tradeSymbol").textContent =
+            `${quote.name || quote.ticker} · ${quote.ticker}`;
+          $("#tradePrice").textContent = price > 0 ? usd.format(price) : "—";
+          const change = $("#tradeChange");
+          change.textContent = Number.isFinite(rate)
+            ? `${Number.isFinite(difference) ? `${difference >= 0 ? "+" : ""}${usd.format(difference)} · ` : ""}${signedPercent(rate)}`
+            : quote.message || "시세 확인";
+          change.className = `trade-change ${rate >= 0 ? "positive" : "negative"}`;
+          $("#tradePreviousClose").textContent =
+            Number(quote.previous_close) > 0
+              ? usd.format(Number(quote.previous_close))
+              : "—";
+          $("#tradeHighLow").textContent =
+            Number(quote.high) > 0
+              ? `${usd.format(Number(quote.high))} / ${usd.format(Number(quote.low))}`
+              : "—";
+          $("#tradeVolume").textContent =
+            Number(quote.volume) > 0
+              ? number.format(Number(quote.volume))
+              : "—";
+          $("#tradeOrderable").textContent =
+            quote.orderable === "Y" ? "가능" : quote.orderable || "확인 필요";
+          $("#tradePriceHint").textContent = `현재가 ${usd.format(price || 0)}`;
+        }
+        renderTradeHoldings();
+        renderSessionOrders();
+        updateTradeEstimate();
+      }
+
+      function searchTradeQuote(tickerValue, exchangeValue) {
+        const ticker = String(tickerValue || $("#tradeTicker").value)
+            .trim()
+            .toUpperCase(),
+          exchange = exchangeValue || $("#tradeExchange").value;
+        if (!/^[A-Z0-9.-]{1,16}$/.test(ticker)) {
+          $("#tradeOrderMessage").textContent =
+            "올바른 미국 주식 티커를 입력해 주세요.";
+          $("#tradeOrderMessage").className = "order-message error";
+          return;
+        }
+        if (state.credentialsMissing || !window.chrome?.webview) {
+          $("#tradeOrderMessage").textContent =
+            "KIS 인증정보를 설정한 뒤 이용해 주세요.";
+          $("#tradeOrderMessage").className = "order-message error";
+          return;
+        }
+        state.trade.loading = true;
+        state.trade.quote = null;
+        state.trade.requestTicker = ticker;
+        state.trade.requestExchange = exchange;
+        $("#tradeOrderPrice").value = "";
+        $("#tradeTicker").value = ticker;
+        $("#tradeExchange").value = exchange;
+        $("#tradeSearchButton").disabled = true;
+        $("#tradeOrderMessage").textContent = "최신 시세를 확인하고 있습니다.";
+        $("#tradeOrderMessage").className = "order-message";
+        renderTrade();
+        window.chrome.webview.postMessage(
+          `apps://internal/request_realtime_quote\n${JSON.stringify({ ticker, exchange })}`,
+        );
+      }
+
+      function load_order_result(payload) {
+        state.trade.submitting = false;
+        state.trade.orders.unshift({
+          success: Boolean(payload?.success),
+          side: payload?.side || state.trade.side,
+          ticker: payload?.ticker || state.trade.quote?.ticker || "",
+          exchange: payload?.exchange || state.trade.quote?.exchange || "",
+          quantity: Number(payload?.quantity) || 0,
+          limit_price: Number(payload?.limit_price) || 0,
+          order_number: String(payload?.order_number || ""),
+          message: String(
+            payload?.message || "처리 결과를 확인하지 못했습니다.",
+          ),
+        });
+        const message = $("#tradeOrderMessage");
+        message.textContent = payload?.success
+          ? `주문이 접수되었습니다${payload.order_number ? ` · 주문번호 ${payload.order_number}` : ""}`
+          : payload?.message || "주문이 거절되었습니다.";
+        message.className = `order-message ${payload?.success ? "success" : "error"}`;
+        renderTrade();
+      }
+
       function searchRealtimeQuote() {
         const ticker = resolveTickerInput($("#realtimeTicker").value);
         const exchange = $("#realtimeExchange").value;
@@ -4598,6 +5281,19 @@
         if (!payload?.success) {
           if (state.selectedQuote)
             state.selectedQuote.message = payload?.message || "시세 조회 실패";
+          if (
+            state.trade.requestTicker &&
+            (!payload?.ticker ||
+              String(payload.ticker).toUpperCase() ===
+                state.trade.requestTicker)
+          ) {
+            state.trade.loading = false;
+            $("#tradeSearchButton").disabled = false;
+            $("#tradeOrderMessage").textContent =
+              payload?.message || "시세를 불러오지 못했습니다.";
+            $("#tradeOrderMessage").className = "order-message error";
+            renderTrade();
+          }
           renderRealtime();
           return;
         }
@@ -4665,6 +5361,21 @@
           watch.price = Number(state.selectedQuote.price);
           watch.changeRate = Number(state.selectedQuote.change_rate) || 0;
           watch.updatedAt = Date.now();
+        }
+        if (
+          state.trade.requestTicker === ticker &&
+          state.trade.requestExchange === exchange
+        ) {
+          state.trade.loading = false;
+          state.trade.quote = { ...state.selectedQuote };
+          $("#tradeSearchButton").disabled = false;
+          if (!$("#tradeOrderPrice").value)
+            $("#tradeOrderPrice").value = Number(
+              state.trade.quote.price,
+            ).toFixed(2);
+          $("#tradeOrderMessage").textContent = "주문 정보를 입력해 주세요.";
+          $("#tradeOrderMessage").className = "order-message";
+          renderTrade();
         }
         renderRealtime();
       }
@@ -5036,6 +5747,14 @@
           };
           appendRealtimeCandle(payload, price);
         }
+        if (state.trade.quote?.ticker === ticker) {
+          state.trade.quote = {
+            ...state.trade.quote,
+            ...payload,
+            price,
+            change_rate: dayRate,
+          };
+        }
         const text = `실시간 수신 ${new Date().toLocaleTimeString("ko-KR", { hour12: false })}`;
         $("#marketStatus").textContent = text;
         if ($("#settingsConnectionStatus"))
@@ -5234,6 +5953,86 @@
           renderPerformanceRanking();
         }),
       );
+
+      $("#tradeSearchForm").addEventListener("submit", (event) => {
+        event.preventDefault();
+        searchTradeQuote();
+      });
+      document.querySelectorAll(".order-tab").forEach((button) =>
+        button.addEventListener("click", () => {
+          state.trade.side = button.dataset.side;
+          $("#tradeOrderMessage").textContent =
+            `${state.trade.side === "buy" ? "매수" : "매도"} 주문 정보를 확인해 주세요.`;
+          $("#tradeOrderMessage").className = "order-message";
+          renderTrade();
+        }),
+      );
+      $("#tradeOrderPrice").addEventListener("input", updateTradeEstimate);
+      $("#tradeOrderQuantity").addEventListener("input", updateTradeEstimate);
+      document.querySelectorAll("[data-qty-add]").forEach((button) =>
+        button.addEventListener("click", () => {
+          const input = $("#tradeOrderQuantity");
+          input.value =
+            Math.max(1, Number(input.value) || 0) +
+            Number(button.dataset.qtyAdd);
+          updateTradeEstimate();
+        }),
+      );
+      $("#tradeHoldings").addEventListener("click", (event) => {
+        const item = event.target.closest("[data-trade-ticker]");
+        if (item)
+          searchTradeQuote(
+            item.dataset.tradeTicker,
+            item.dataset.tradeExchange,
+          );
+      });
+      $("#tradeOrderForm").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const quote = state.trade.quote,
+          side = state.trade.side,
+          quantity = Number($("#tradeOrderQuantity").value),
+          limitPrice = Number($("#tradeOrderPrice").value),
+          holding = ownedTradeStock(),
+          message = $("#tradeOrderMessage");
+        if (
+          !quote ||
+          !Number.isInteger(quantity) ||
+          quantity <= 0 ||
+          !Number.isFinite(limitPrice) ||
+          limitPrice <= 0
+        ) {
+          message.textContent = "종목, 수량과 지정가를 확인해 주세요.";
+          message.className = "order-message error";
+          return;
+        }
+        if (side === "sell" && quantity > Number(holding?.orderable || 0)) {
+          message.textContent = `매도 가능 수량은 ${number.format(holding?.orderable || 0)}주입니다.`;
+          message.className = "order-message error";
+          return;
+        }
+        const sideLabel = side === "buy" ? "매수" : "매도",
+          total = limitPrice * quantity;
+        if (
+          !window.confirm(
+            `${quote.ticker} ${quantity}주를 ${usd.format(limitPrice)}에 ${sideLabel} 주문하시겠습니까?\n예상 주문금액 ${usd.format(total)}\n\nKIS 실전 계좌로 전송됩니다.`,
+          )
+        )
+          return;
+        state.trade.submitting = true;
+        message.textContent =
+          "KIS에 주문을 전송하고 있습니다. 창을 닫지 마세요.";
+        message.className = "order-message";
+        renderTrade();
+        window.chrome.webview.postMessage(
+          `apps://internal/place_overseas_order\n${JSON.stringify({
+            side,
+            ticker: quote.ticker,
+            exchange: quote.exchange,
+            quantity,
+            limit_price: limitPrice,
+          })}`,
+        );
+      });
 
       $("#realtimeSearchForm").addEventListener("submit", (event) => {
         event.preventDefault();

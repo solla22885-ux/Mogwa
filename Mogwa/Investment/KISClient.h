@@ -45,6 +45,11 @@ public:
     bool request_overseas_quote(const std::string& appkey, const std::string& appsecret,
         const kis_domain::information_token& info_token, const std::string& exchange,
         const std::string& ticker, kis_domain::overseas_quote& output);
+    bool request_overseas_order(const std::string& appkey, const std::string& appsecret,
+        const std::string& account_number, const std::string& account_product_code,
+        const kis_domain::information_token& info_token, const std::string& side,
+        const std::string& exchange, const std::string& ticker, uint64_t quantity,
+        double limit_price, kis_domain::overseas_order_result& output);
 
     const std::string& getLastError() const noexcept { return _last_error; }
     const std::string& getLastErrorCode() const noexcept { return _last_error_code; }

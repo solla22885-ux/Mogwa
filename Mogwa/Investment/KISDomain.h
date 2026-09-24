@@ -93,6 +93,13 @@ namespace kis_domain {
         std::string orderable;
     };
 
+    struct overseas_order_result {
+        std::string order_number;
+        std::string order_time;
+        std::string branch_number;
+        std::string message;
+    };
+
     struct information_balance {
         std::vector<balance_item1> stockList;
         balance_item2 summary;

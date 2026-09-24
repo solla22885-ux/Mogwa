@@ -21,6 +21,7 @@ namespace webview_message {
     inline constexpr std::wstring_view load_portfolio_history = L"load_portfolio_history\n";
     inline constexpr std::wstring_view load_performance_history = L"load_performance_history\n";
     inline constexpr std::wstring_view request_realtime_quote = L"request_realtime_quote\n";
+    inline constexpr std::wstring_view place_overseas_order = L"place_overseas_order\n";
     inline constexpr std::wstring_view save_kis_credentials = L"save_kis_credentials\n";
 }
 

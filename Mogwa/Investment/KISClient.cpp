@@ -693,6 +693,104 @@ bool KISClient::request_overseas_quote(const std::string& appkey, const std::str
     return true;
 }
 
+bool KISClient::request_overseas_order(const std::string& appkey, const std::string& appsecret,
+    const std::string& account_number, const std::string& account_product_code,
+    const kis_domain::information_token& info_token, const std::string& side,
+    const std::string& exchange, const std::string& ticker, uint64_t quantity,
+    double limit_price, kis_domain::overseas_order_result& output)
+{
+    output = {};
+    _last_error.clear();
+    _last_error_code.clear();
+    if ((side != "buy" && side != "sell") || ticker.empty() || quantity == 0 || limit_price <= 0) {
+        _last_error = "주문 정보를 확인해 주세요.";
+        return false;
+    }
+    if (exchange != "NASD" && exchange != "NYSE" && exchange != "AMEX") {
+        _last_error = "현재 미국 주식 주문만 지원합니다.";
+        return false;
+    }
+
+    std::ostringstream price;
+    price << std::fixed << std::setprecision(4) << limit_price;
+    std::string price_text = price.str();
+    while (price_text.size() > 1 && price_text.back() == '0') price_text.pop_back();
+    if (!price_text.empty() && price_text.back() == '.') price_text.pop_back();
+
+    boost::json::object request;
+    request["CANO"] = account_number;
+    request["ACNT_PRDT_CD"] = account_product_code;
+    request["OVRS_EXCG_CD"] = exchange;
+    request["PDNO"] = ticker;
+    request["ORD_DVSN"] = "00";
+    request["ORD_QTY"] = std::to_string(quantity);
+    request["OVRS_ORD_UNPR"] = price_text;
+    request["SLL_TYPE"] = side == "sell" ? "00" : "";
+    request["ORD_SVR_DVSN_CD"] = "0";
+    const std::string body = boost::json::serialize(request);
+
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        _last_error = "해외주식 주문 요청을 초기화하지 못했습니다.";
+        return false;
+    }
+
+    std::string response;
+    struct curl_slist* headers = nullptr;
+    m1::util::scope_exit exit([&curl, &headers]() {
+        curl_easy_cleanup(curl);
+        curl_slist_free_all(headers);
+    });
+    headers = curl_slist_append(headers, "Content-Type: application/json; charset=utf-8");
+    headers = curl_slist_append(headers, ("authorization: Bearer " + info_token.access_token).c_str());
+    headers = curl_slist_append(headers, ("appkey: " + appkey).c_str());
+    headers = curl_slist_append(headers, ("appsecret: " + appsecret).c_str());
+    headers = curl_slist_append(headers, side == "buy" ? "tr_id: TTTT1002U" : "tr_id: TTTT1006U");
+    headers = curl_slist_append(headers, "custtype: P");
+
+    const std::string url = std::string(BASE_URL) + std::string(ORDER_PATH);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    configure_request(curl);
+
+    long status_code = 0;
+    if (!perform_request(curl, &status_code)) {
+        _last_error_code = response_error_code(response);
+        _last_error = response_error_message(response,
+            status_code > 0 ? std::format("주문 요청이 HTTP {}로 실패했습니다.", status_code)
+                            : "한국투자증권 주문 서버에 연결하지 못했습니다.");
+        return false;
+    }
+
+    boost::system::error_code parse_error;
+    const boost::json::value parsed = boost::json::parse(response, parse_error);
+    if (parse_error || !parsed.is_object()) {
+        _last_error = "주문 서버가 올바른 JSON을 반환하지 않았습니다.";
+        return false;
+    }
+    const auto& root = parsed.as_object();
+    if (!api_response_succeeded(root)) {
+        _last_error_code = response_error_code(response);
+        _last_error = response_error_message(response, "해외주식 주문이 거절되었습니다.");
+        return false;
+    }
+    if (const auto* value = root.if_contains("msg1"); value && value->is_string()) {
+        output.message = std::string(value->as_string());
+    }
+    if (const auto* value = root.if_contains("output"); value && value->is_object()) {
+        const auto& row = value->as_object();
+        output.order_number = json_string(row, { "ODNO" });
+        output.order_time = json_string(row, { "ORD_TMD" });
+        output.branch_number = json_string(row, { "KRX_FWDG_ORD_ORGNO" });
+    }
+    if (output.message.empty()) output.message = "주문이 접수되었습니다.";
+    return true;
+}
+
 bool KISClient::request_overseas_daily_bars(const std::string& appkey, const std::string& appsecret,
     const kis_domain::information_token& info_token, const std::string& exchange,
     const std::string& ticker, const std::string& start_date, const std::string& end_date,

@@ -71,6 +71,9 @@ public:
     bool requestPortfolioPerformance(std::vector<portfolio_holding> holdings,
         const std::string& start_date, const std::string& end_date);
     bool requestRealtimeQuote(const std::string& ticker, const std::string& exchange);
+    bool placeOverseasOrder(const std::string& side, const std::string& ticker,
+        const std::string& exchange, uint64_t quantity, double limit_price,
+        kis_domain::overseas_order_result& output);
     bool clearKisCredentials();
     bool saveKisCredentials(const std::string& app_key, const std::string& app_secret,
         const std::string& account_number, const std::string& product_code);
